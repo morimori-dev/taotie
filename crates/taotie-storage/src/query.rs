@@ -19,7 +19,8 @@ use taotie_schema::{
     EventFull, EventPageQuery, EventRow, EventTimelineBin, EvidenceOffset, FailedParserSummary,
     FileOpBin, FilePageQuery,
     FileRecord, FindingEventPageQuery, FindingSummary, IocEventPageQuery, IocHit, Page,
-    ParserStatus, PrefetchSummary, ProcessTreeEdge, RawRecord, RiskSummary, Subgraph, TimelineBin,
+    ParserStatus, PrefetchSummary, ProcessNode, ProcessTreeEdge, RawRecord, RiskSummary, Subgraph,
+    TimelineBin,
     TimestompPoint, UserActivitySummary,
 };
 use tracing::debug;
@@ -538,6 +539,100 @@ impl DuckDbQueryLayer {
         edges.truncate(edge_cap);
         log_payload("process_tree", &edges, started);
         Ok(edges)
+    }
+
+    /// Instance-level process tree: one node per `process_created` event, keyed on
+    /// Sysmon ProcessGuid when available (exact) or a PID-derived key (best-effort).
+    /// Returned flat; the UI assembles the hierarchy from key/parent_key. Nodes are
+    /// ordered by time and deduped by key (earliest occurrence wins).
+    pub fn process_tree_instances(&self, limit: Option<usize>) -> Result<Vec<ProcessNode>> {
+        let started = Instant::now();
+        let Some(expr) = self.table_expr("lake/events_full")? else {
+            return Ok(Vec::new());
+        };
+        let node_cap = bounded_limit(limit, 2000, 8000);
+        let sev_col = if self.table_has_column("lake/events_full", "severity")? {
+            "severity"
+        } else {
+            "NULL AS severity"
+        };
+        let find_col = if self.table_has_column("lake/events_full", "has_finding")? {
+            "has_finding"
+        } else {
+            "CAST(false AS BOOLEAN) AS has_finding"
+        };
+        let conn = Connection::open_in_memory()?;
+        let sql = format!(
+            "SELECT event_id, event_time_utc, process_name, user_name, {sev_col}, {find_col}, \
+                json_extract_string(attributes_json, '$.process_id') AS pid, \
+                json_extract_string(attributes_json, '$.process_guid') AS guid, \
+                json_extract_string(attributes_json, '$.parent_process_id') AS ppid, \
+                json_extract_string(attributes_json, '$.parent_process_guid') AS pguid, \
+                json_extract_string(attributes_json, '$.command_line') AS command_line \
+             FROM {expr} \
+             WHERE event_action = 'process_created' AND process_name IS NOT NULL \
+             ORDER BY event_time_utc \
+             LIMIT 200000"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,         // event_id
+                row.get::<_, Option<String>>(1)?, // event_time_utc
+                row.get::<_, Option<String>>(2)?, // process_name
+                row.get::<_, Option<String>>(3)?, // user_name
+                row.get::<_, Option<String>>(4)?, // severity
+                row.get::<_, Option<bool>>(5)?,   // has_finding
+                row.get::<_, Option<String>>(6)?, // pid
+                row.get::<_, Option<String>>(7)?, // guid
+                row.get::<_, Option<String>>(8)?, // ppid
+                row.get::<_, Option<String>>(9)?, // pguid
+                row.get::<_, Option<String>>(10)?, // command_line
+            ))
+        })?;
+        let clean = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut nodes: Vec<ProcessNode> = Vec::new();
+        for row in rows {
+            let (event_id, time, name, user, sev, finding, pid, guid, ppid, pguid, cmd) = row?;
+            let name = process_basename(&name.unwrap_or_default());
+            if name.is_empty() {
+                continue;
+            }
+            let (pid, guid, ppid, pguid) =
+                (clean(pid), clean(guid), clean(ppid), clean(pguid));
+            let key = match (&guid, &pid) {
+                (Some(g), _) => format!("guid:{g}"),
+                (None, Some(p)) => format!("pid:{p}"),
+                _ => format!("evt:{event_id}"),
+            };
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let parent_key = match (&pguid, &ppid) {
+                (Some(g), _) => Some(format!("guid:{g}")),
+                (None, Some(p)) => Some(format!("pid:{p}")),
+                _ => None,
+            };
+            nodes.push(ProcessNode {
+                key,
+                parent_key,
+                name,
+                pid,
+                guid,
+                command_line: clean(cmd),
+                user_name: clean(user),
+                first_seen_utc: clean(time),
+                event_id,
+                severity: clean(sev),
+                has_finding: finding.unwrap_or(false),
+            });
+            if nodes.len() >= node_cap {
+                break;
+            }
+        }
+        log_payload("process_tree_instances", &nodes, started);
+        Ok(nodes)
     }
 
     /// USN journal file-operation timeline, bucketed by hour and split by reason,

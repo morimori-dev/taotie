@@ -2819,6 +2819,8 @@ fn build_evtx_xml_event(
     );
     let record_id = extract_xml_tag(chunk, "EventRecordID")
         .or_else(|| native_record_id.map(|id| id.to_string()));
+    let (process_id, process_guid, parent_process_id, parent_process_guid) =
+        process_identity(&data);
     let attributes_json = json!({
         "event_id": event_code.clone(),
         "provider": provider.clone(),
@@ -2826,6 +2828,10 @@ fn build_evtx_xml_event(
         "native_record_id": native_record_id,
         "channel": channel.clone(),
         "parent_process": first_named(&data, &["ParentImage", "ParentProcessName", "ParentCommandLine"]),
+        "process_id": process_id,
+        "process_guid": process_guid,
+        "parent_process_id": parent_process_id,
+        "parent_process_guid": parent_process_guid,
         "command_line": first_named(&data, &["CommandLine", "ProcessCommandLine"]),
         "logon_id": first_named(&data, &["LogonId", "TargetLogonId", "SubjectLogonId"]),
         "logon_type": first_named(&data, &["LogonType"]),
@@ -3103,12 +3109,18 @@ fn parse_json_events(
         .to_string();
         let url = first_flat(&flat, &["url", "queryname", "destinationurl", "sourceurl"]);
         let hash = first_flat(&flat, &["hash", "hashes", "sha256", "sha1", "md5"]);
+        let (process_id, process_guid, parent_process_id, parent_process_guid) =
+            process_identity(&flat);
         let attributes_json = json!({
             "event_id": event_code,
             "provider": provider,
             "record_id": first_flat(&flat, &["eventrecordid", "recordid"]),
             "channel": channel,
             "parent_process": first_flat(&flat, &["parentimage", "parentprocessname", "parentcommandline"]),
+            "process_id": process_id,
+            "process_guid": process_guid,
+            "parent_process_id": parent_process_id,
+            "parent_process_guid": parent_process_guid,
             "command_line": first_flat(&flat, &["commandline", "processcommandline"]),
             "logon_id": first_flat(&flat, &["logonid", "targetlogonid", "subjectlogonid"]),
             "logon_type": first_flat(&flat, &["logontype"]),
@@ -3280,12 +3292,18 @@ fn parse_evtx_csv(
         let url = first_event_field(&row, &["url", "queryname", "destinationurl", "sourceurl"]);
         let hash = first_event_field(&row, &["hash", "hashes", "sha256", "sha1", "md5"])
             .or_else(|| extract_hash_like(&message_full));
+        let (process_id, process_guid, parent_process_id, parent_process_guid) =
+            process_identity(&row);
         let attributes_json = json!({
             "event_id": event_code,
             "provider": provider,
             "record_id": cell(&row, &["eventrecordid", "recordid"]),
             "channel": channel,
             "parent_process": cell(&row, &["parentimage", "parentprocessname", "parentcommandline"]),
+            "process_id": process_id,
+            "process_guid": process_guid,
+            "parent_process_id": parent_process_id,
+            "parent_process_guid": parent_process_guid,
             "command_line": cell(&row, &["commandline", "processcommandline"]),
             "logon_id": cell(&row, &["logonid", "targetlogonid", "subjectlogonid"]),
             "logon_type": cell(&row, &["logontype"]),
@@ -10590,6 +10608,50 @@ fn cell(row: &HashMap<String, String>, names: &[&str]) -> Option<String> {
         .find_map(|name| clean_opt(row.get(&name).cloned()))
 }
 
+/// Normalize a PID that may be hex ("0x1a4", Security 4688) or decimal (Sysmon).
+fn normalize_pid(pid: Option<String>) -> Option<String> {
+    let pid = pid?;
+    let trimmed = pid.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        if let Ok(n) = u64::from_str_radix(hex, 16) {
+            return Some(n.to_string());
+        }
+    }
+    clean_opt(Some(trimmed.to_string()))
+}
+
+/// Extract normalized process identity across Sysmon (EID 1) and Security (4688).
+/// In 4688, `ProcessId` is the creator (parent) and `NewProcessId` is the child;
+/// in Sysmon, `ProcessId` is the child and `ParentProcessId` the parent. GUIDs
+/// (Sysmon-only) are the reliable per-instance key; PIDs are best-effort.
+/// Returns (process_id, process_guid, parent_process_id, parent_process_guid).
+fn process_identity(
+    row: &HashMap<String, String>,
+) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+    let process_guid = first_named(row, &["ProcessGuid"]);
+    let parent_process_guid = first_named(row, &["ParentProcessGuid"]);
+    let new_pid = first_named(row, &["NewProcessId"]);
+    let (process_id, parent_process_id) = if new_pid.is_some() {
+        // Security 4688: NewProcessId = child, ProcessId = creator/parent.
+        (new_pid, first_named(row, &["ProcessId", "CreatorProcessId"]))
+    } else {
+        // Sysmon EID 1 (and generic): ProcessId = child, ParentProcessId = parent.
+        (
+            first_named(row, &["ProcessId"]),
+            first_named(row, &["ParentProcessId"]),
+        )
+    };
+    (
+        normalize_pid(process_id),
+        process_guid,
+        normalize_pid(parent_process_id),
+        parent_process_guid,
+    )
+}
+
 fn first_flat(row: &HashMap<String, String>, names: &[&str]) -> Option<String> {
     cell(row, names)
 }
@@ -13067,6 +13129,44 @@ mod tests {
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use std::io::Write;
+
+    fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn process_identity_sysmon_eid1_uses_guid_and_child_pid() {
+        // Sysmon EID 1: ProcessId is the child, ParentProcessId the parent; GUIDs present.
+        let row = map(&[
+            ("ProcessGuid", "{aaaa-1111}"),
+            ("ProcessId", "4321"),
+            ("ParentProcessGuid", "{bbbb-2222}"),
+            ("ParentProcessId", "1000"),
+        ]);
+        let (pid, guid, ppid, pguid) = process_identity(&row);
+        assert_eq!(pid.as_deref(), Some("4321"));
+        assert_eq!(guid.as_deref(), Some("{aaaa-1111}"));
+        assert_eq!(ppid.as_deref(), Some("1000"));
+        assert_eq!(pguid.as_deref(), Some("{bbbb-2222}"));
+    }
+
+    #[test]
+    fn process_identity_security_4688_maps_new_pid_to_child_and_hex_to_decimal() {
+        // Security 4688: NewProcessId is the child, ProcessId is the creator/parent.
+        // Both are hex and must normalize to decimal. No GUIDs available.
+        let row = map(&[
+            ("NewProcessId", "0x1a4"),
+            ("ProcessId", "0x2b8"),
+        ]);
+        let (pid, guid, ppid, pguid) = process_identity(&row);
+        assert_eq!(pid.as_deref(), Some("420")); // 0x1a4
+        assert_eq!(ppid.as_deref(), Some("696")); // 0x2b8
+        assert!(guid.is_none());
+        assert!(pguid.is_none());
+    }
 
     #[test]
     fn sanitize_account_name_strips_evtx_garbage_prefix() {

@@ -558,6 +558,26 @@ pub struct ProcessTreeEdge {
     pub count: i64,
 }
 
+/// One process instance in the instance-level process tree, derived from a
+/// `process_created` event. The tree is returned as a flat node list; the UI
+/// assembles the hierarchy from `key` / `parent_key`. `key` prefers the Sysmon
+/// ProcessGuid (exact per-instance identity), falling back to a PID-derived key.
+/// A node whose `parent_key` matches no other node's `key` is a root.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProcessNode {
+    pub key: String,
+    pub parent_key: Option<String>,
+    pub name: String,
+    pub pid: Option<String>,
+    pub guid: Option<String>,
+    pub command_line: Option<String>,
+    pub user_name: Option<String>,
+    pub first_seen_utc: Option<String>,
+    pub event_id: String,
+    pub severity: Option<String>,
+    pub has_finding: bool,
+}
+
 /// One time bucket of USN journal file operations, split by reason so the UI can
 /// draw creates upward and deletes downward (diverging bars).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
