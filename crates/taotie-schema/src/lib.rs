@@ -568,9 +568,13 @@ pub struct ProcessNode {
     pub key: String,
     pub parent_key: Option<String>,
     pub name: String,
+    /// Full image path (process_name before basename), for the detail card.
+    pub image: Option<String>,
     pub pid: Option<String>,
     pub guid: Option<String>,
     pub command_line: Option<String>,
+    /// Image hash (SHA256/SHA1) when the source provides one (e.g. Sysmon).
+    pub hash: Option<String>,
     pub user_name: Option<String>,
     pub first_seen_utc: Option<String>,
     pub event_id: String,

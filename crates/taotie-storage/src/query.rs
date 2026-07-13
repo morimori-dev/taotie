@@ -557,9 +557,14 @@ impl DuckDbQueryLayer {
         // pulled from attributes_json with regexp_extract to match the rest of the
         // codebase (no reliance on the DuckDB json extension).
         let finding_severity = self.finding_severity_by_event()?;
+        let hash_col = if self.table_has_column("lake/events_full", "hash")? {
+            "hash"
+        } else {
+            "CAST(NULL AS VARCHAR) AS hash"
+        };
         let conn = Connection::open_in_memory()?;
         let sql = format!(
-            "SELECT event_id, event_time_utc, process_name, user_name, \
+            "SELECT event_id, event_time_utc, process_name, user_name, {hash_col}, \
                 NULLIF(regexp_extract(attributes_json, '\"process_id\":\"([^\"]*)\"', 1), '') AS pid, \
                 NULLIF(regexp_extract(attributes_json, '\"process_guid\":\"([^\"]*)\"', 1), '') AS guid, \
                 NULLIF(regexp_extract(attributes_json, '\"parent_process_id\":\"([^\"]*)\"', 1), '') AS ppid, \
@@ -573,23 +578,25 @@ impl DuckDbQueryLayer {
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([], |row| {
             Ok((
-                row.get::<_, String>(0)?,         // event_id
-                row.get::<_, Option<String>>(1)?, // event_time_utc
-                row.get::<_, Option<String>>(2)?, // process_name
-                row.get::<_, Option<String>>(3)?, // user_name
-                row.get::<_, Option<String>>(4)?, // pid
-                row.get::<_, Option<String>>(5)?, // guid
-                row.get::<_, Option<String>>(6)?, // ppid
-                row.get::<_, Option<String>>(7)?, // pguid
-                row.get::<_, Option<String>>(8)?, // command_line
+                row.get::<_, String>(0)?,          // event_id
+                row.get::<_, Option<String>>(1)?,  // event_time_utc
+                row.get::<_, Option<String>>(2)?,  // process_name (full image)
+                row.get::<_, Option<String>>(3)?,  // user_name
+                row.get::<_, Option<String>>(4)?,  // hash
+                row.get::<_, Option<String>>(5)?,  // pid
+                row.get::<_, Option<String>>(6)?,  // guid
+                row.get::<_, Option<String>>(7)?,  // ppid
+                row.get::<_, Option<String>>(8)?,  // pguid
+                row.get::<_, Option<String>>(9)?,  // command_line
             ))
         })?;
         let clean = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
         let mut seen: HashSet<String> = HashSet::new();
         let mut nodes: Vec<ProcessNode> = Vec::new();
         for row in rows {
-            let (event_id, time, name, user, pid, guid, ppid, pguid, cmd) = row?;
-            let name = process_basename(&name.unwrap_or_default());
+            let (event_id, time, image, user, hash, pid, guid, ppid, pguid, cmd) = row?;
+            let image = clean(image);
+            let name = process_basename(image.as_deref().unwrap_or_default());
             if name.is_empty() {
                 continue;
             }
@@ -612,9 +619,11 @@ impl DuckDbQueryLayer {
                 key,
                 parent_key,
                 name,
+                image,
                 pid,
                 guid,
                 command_line: clean(cmd),
+                hash: clean(hash),
                 user_name: clean(user),
                 first_seen_utc: clean(time),
                 event_id,

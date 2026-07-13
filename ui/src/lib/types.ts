@@ -398,9 +398,11 @@ export interface ProcessNode {
   key: string;
   parent_key: string | null;
   name: string;
+  image: string | null;
   pid: string | null;
   guid: string | null;
   command_line: string | null;
+  hash: string | null;
   user_name: string | null;
   first_seen_utc: string | null;
   event_id: string;
