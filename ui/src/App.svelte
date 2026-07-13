@@ -2439,8 +2439,17 @@
     return m ? m[1] : h;
   }
 
-  async function drillDownProcessNode(node: ProcessNode) {
-    await drillDownToEvents({ search: `process:"${node.name}"` });
+  let processCopiedKey: string | null = null;
+  async function copyProcessValue(text: string, tagKey: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      processCopiedKey = tagKey;
+      setTimeout(() => {
+        if (processCopiedKey === tagKey) processCopiedKey = null;
+      }, 1200);
+    } catch {
+      // clipboard unavailable; ignore
+    }
   }
 
   async function loadFindings() {
@@ -8609,79 +8618,105 @@
         {:else if processTreeRows.length === 0}
           <div class="empty-state">{$t('empty.process_tree')}</div>
         {:else}
-          <div class="ptree-list ptree-graph">
+          <div class="ptree-graph">
             {#each processTreeRows as row (row.node.key)}
-              <div
-                class="ptree-row"
-                class:has-finding={isNotableProcess(row.node)}
-                class:selected={selectedProcessNode?.key === row.node.key}
-                style={`--pdepth:${row.depth}; padding-left:${row.depth * 22 + 8}px`}
-                role="button"
-                tabindex="0"
-                on:click={() => selectProcessNode(row.node)}
-                on:keydown={(e) => e.key === 'Enter' && selectProcessNode(row.node)}
-              >
-                {#if row.hasChildren}
-                  <button
-                    class="ptree-caret"
-                    on:click|stopPropagation={() => toggleProcessNode(row.node.key)}
-                    aria-label={processTreeExpanded.has(row.node.key)
-                      ? $t('ptree.collapse')
-                      : $t('ptree.expand')}
-                    >{processTreeExpanded.has(row.node.key) ? '▾' : '▸'}</button
-                  >
-                {:else}
-                  <span class="ptree-caret ptree-caret-empty"></span>
-                {/if}
-                {#if isNotableProcess(row.node)}
-                  <span
-                    class="ptree-dot"
-                    style={`background:${severityColor(row.node.severity)}`}
-                    title={row.node.severity ?? ''}
-                  ></span>
-                {/if}
-                <span class="ptree-name">{row.node.name}</span>
-                {#if row.node.pid}<span class="ptree-pid">[{row.node.pid}]</span>{/if}
-                {#if row.node.command_line}<span
-                    class="ptree-cmd"
-                    title={row.node.command_line}>{row.node.command_line}</span
-                  >{/if}
-              </div>
-              {#if selectedProcessNode?.key === row.node.key}
-                <div class="ptree-card" style={`margin-left:${row.depth * 22 + 26}px`}>
-                  <div class="ptree-card-grid">
-                    <span class="ptree-card-k">{$t('ptree.detail.pid')}</span>
-                    <span class="ptree-card-v">{row.node.pid ?? '—'}</span>
-                    <span class="ptree-card-k">{$t('ptree.detail.time')}</span>
-                    <span class="ptree-card-v">{row.node.first_seen_utc ?? '—'}</span>
-                    <span class="ptree-card-k">{$t('ptree.detail.cmdline')}</span>
-                    <span class="ptree-card-v ptree-mono">{row.node.command_line ?? '—'}</span>
-                    <span class="ptree-card-k">{$t('ptree.detail.image')}</span>
-                    <span class="ptree-card-v ptree-mono">{row.node.image ?? '—'}</span>
-                    <span class="ptree-card-k">GUID</span>
-                    <span class="ptree-card-v ptree-mono">{row.node.guid ?? '—'}</span>
-                    <span class="ptree-card-k">SHA256</span>
-                    <span class="ptree-card-v ptree-mono">{processSha256(row.node)}</span>
-                    <span class="ptree-card-k">{$t('ptree.detail.user')}</span>
-                    <span class="ptree-card-v">{row.node.user_name ?? '—'}</span>
-                    <span class="ptree-card-k">{$t('ptree.detail.detection')}</span>
-                    <span class="ptree-card-v">
-                      {#if row.node.has_finding && row.node.severity}
-                        <span
-                          class="ptree-sev"
-                          style={`color:${severityColor(row.node.severity)}`}
-                          >{row.node.severity}</span
-                        >
-                      {:else}—{/if}
-                    </span>
-                  </div>
-                  <button
-                    class="search-apply-button ptree-view-events"
-                    on:click={() => drillDownProcessNode(row.node)}
-                    >{$t('ptree.view_events')}</button
-                  >
+              {@const isSel = selectedProcessNode?.key === row.node.key}
+              <div class="ptree-node-wrap" style={`--pdepth:${row.depth}`}>
+                <div
+                  class="ptree-node"
+                  class:has-finding={isNotableProcess(row.node)}
+                  class:selected={isSel}
+                  role="button"
+                  tabindex="0"
+                  on:click={() => selectProcessNode(row.node)}
+                  on:keydown={(e) => e.key === 'Enter' && selectProcessNode(row.node)}
+                >
+                  {#if row.hasChildren}
+                    <button
+                      class="ptree-caret"
+                      on:click|stopPropagation={() => toggleProcessNode(row.node.key)}
+                      aria-label={processTreeExpanded.has(row.node.key)
+                        ? $t('ptree.collapse')
+                        : $t('ptree.expand')}
+                      >{processTreeExpanded.has(row.node.key) ? '▾' : '▸'}</button
+                    >
+                  {:else}
+                    <span class="ptree-caret ptree-caret-empty"></span>
+                  {/if}
+                  {#if isNotableProcess(row.node)}
+                    <span
+                      class="ptree-dot"
+                      style={`background:${severityColor(row.node.severity)}`}
+                      title={row.node.severity ?? ''}
+                    ></span>
+                  {/if}
+                  {#if row.node.pid}<span class="ptree-pid">[{row.node.pid}]</span>{/if}
+                  <span class="ptree-name">{row.node.name}</span>
+                  {#if row.node.command_line}<span
+                      class="ptree-cmd"
+                      title={row.node.command_line}>{row.node.command_line}</span
+                    >{/if}
+                  <span class="ptree-chev">{isSel ? '⌄' : '›'}</span>
                 </div>
-              {/if}
+                {#if isSel}
+                  <div class="ptree-card">
+                    <div class="ptree-card-grid">
+                      <span class="ptree-card-k">{$t('ptree.detail.pid')}</span>
+                      <span class="ptree-card-v">{row.node.pid ?? '—'}</span>
+                      <span class="ptree-card-k">{$t('ptree.detail.time')}</span>
+                      <span class="ptree-card-v">{row.node.first_seen_utc ?? '—'}</span>
+                      <span class="ptree-card-k">{$t('ptree.detail.cmdline')}</span>
+                      <span class="ptree-card-v">
+                        {#if row.node.command_line}
+                          <span class="ptree-cmdbox">
+                            <pre class="ptree-mono">{row.node.command_line}</pre>
+                            <button
+                              class="ptree-copy"
+                              title={$t('ptree.copy')}
+                              on:click|stopPropagation={() =>
+                                copyProcessValue(row.node.command_line ?? '', `cmd:${row.node.key}`)}
+                              >{processCopiedKey === `cmd:${row.node.key}`
+                                ? $t('ptree.copied')
+                                : '⧉'}</button
+                            >
+                          </span>
+                        {:else}—{/if}
+                      </span>
+                      <span class="ptree-card-k">{$t('ptree.detail.image')}</span>
+                      <span class="ptree-card-v ptree-mono">{row.node.image ?? '—'}</span>
+                      <span class="ptree-card-k">GUID</span>
+                      <span class="ptree-card-v ptree-mono">{row.node.guid ?? '—'}</span>
+                      <span class="ptree-card-k">SHA256</span>
+                      <span class="ptree-card-v ptree-mono ptree-hashval">
+                        {processSha256(row.node)}
+                        {#if row.node.hash}
+                          <button
+                            class="ptree-copy"
+                            title={$t('ptree.copy')}
+                            on:click|stopPropagation={() =>
+                              copyProcessValue(processSha256(row.node), `sha:${row.node.key}`)}
+                            >{processCopiedKey === `sha:${row.node.key}`
+                              ? $t('ptree.copied')
+                              : '⧉'}</button
+                          >
+                        {/if}
+                      </span>
+                      <span class="ptree-card-k">{$t('ptree.detail.user')}</span>
+                      <span class="ptree-card-v">{row.node.user_name ?? '—'}</span>
+                      <span class="ptree-card-k">{$t('ptree.detail.detection')}</span>
+                      <span class="ptree-card-v">
+                        {#if row.node.has_finding && row.node.severity}
+                          <span
+                            class="ptree-sev"
+                            style={`color:${severityColor(row.node.severity)}`}
+                            >{row.node.severity}</span
+                          >
+                        {:else}—{/if}
+                      </span>
+                    </div>
+                  </div>
+                {/if}
+              </div>
             {/each}
           </div>
         {/if}

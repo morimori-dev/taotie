@@ -4587,55 +4587,49 @@ html {
   padding: 6px 10px; font-size: 12px; border-radius: 2px; cursor: pointer;
 }
 .ptree-controls button:hover { border-color: var(--accent); color: #e6eef4; }
-.ptree-summary { padding: 8px 16px 12px; font-size: 13px; }
-.ptree-list {
-  border-top: 1px solid #26313c; overflow: auto; min-height: 0;
-  font-family: var(--mono, ui-monospace, "Cascadia Code", Menlo, Consolas, monospace);
-}
-.ptree-row {
-  display: flex; align-items: center; gap: 10px; min-height: 32px;
-  border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer; padding-right: 12px;
+/* --- Process tree: Defender-style entities graph (boxed nodes, inline card) --- */
+/* Inherit the app's Inter/14px like every other tab (was monospace/small). */
+.ptree-summary { padding: 8px 16px 10px; font-size: 14px; }
+.ptree-graph { overflow: auto; min-height: 0; padding: 8px 16px 16px; }
+.ptree-node-wrap { margin-left: calc(var(--pdepth, 0) * 26px); }
+.ptree-node {
+  display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 4px 12px;
+  border: 1px solid #2a3a4c; background: #131d29; margin-top: 6px; cursor: pointer;
   font-size: 14px; white-space: nowrap;
 }
-.ptree-row:hover { background: #16202e; }
-.ptree-row.has-finding { background: rgba(220, 70, 70, 0.06); }
-.ptree-row.has-finding:hover { background: rgba(220, 70, 70, 0.12); }
+.ptree-node:hover { background: #182636; border-color: #38506b; }
+.ptree-node.has-finding { border-left: 3px solid #c0392b; }
+.ptree-node.selected { border-color: var(--accent); background: #16273a; }
 .ptree-caret {
   flex: 0 0 auto; width: 20px; height: 20px; line-height: 20px; text-align: center;
-  background: transparent; border: none; color: #7f8ea0; cursor: pointer; font-size: 13px; padding: 0;
+  background: transparent; border: none; color: #8b9bad; cursor: pointer; font-size: 13px; padding: 0;
 }
 .ptree-caret-empty { visibility: hidden; }
 .ptree-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; }
-.ptree-name { color: #e6eef4; font-weight: 600; font-size: 14px; }
-.ptree-pid { color: #7f8ea0; font-size: 12.5px; }
-.ptree-cmd {
-  color: #9fb0c0; overflow: hidden; text-overflow: ellipsis; max-width: 46vw; font-size: 13px;
-}
-.ptree-meta { margin-left: auto; color: #6f7d8c; font-size: 12.5px; }
-
-/* --- Process tree: Defender-style entities graph (single column, inline card) --- */
-.ptree-graph .ptree-row { position: relative; }
-/* Faint vertical guide rail at the node's own indent, for tree feel. */
-.ptree-graph .ptree-row::before {
-  content: ''; position: absolute; top: 0; height: 100%;
-  left: calc(var(--pdepth, 0) * 22px + 12px); border-left: 1px solid #263140;
-}
-.ptree-graph .ptree-row[style*='--pdepth:0']::before { display: none; }
-.ptree-cmd { flex: 1 1 auto; min-width: 0; }
-.ptree-pid { flex: 0 0 auto; }
-.ptree-row.selected { background: var(--sel-bg, #14324a); }
-.ptree-row.selected:hover { background: var(--sel-bg, #14324a); }
-/* Inline detail card that expands directly under the selected node. */
+.ptree-pid { flex: 0 0 auto; color: #8b9bad; font-weight: 700; }
+.ptree-name { flex: 0 0 auto; color: #e6eef4; font-weight: 700; }
+.ptree-cmd { flex: 1 1 auto; min-width: 0; color: #9fb0c0; overflow: hidden; text-overflow: ellipsis; }
+.ptree-chev { flex: 0 0 auto; color: #6f7d8c; font-size: 14px; margin-left: 4px; }
+/* Inline detail card that expands inside the node group (Defender style). */
 .ptree-card {
-  border: 1px solid #2a3a4c; border-left: 2px solid var(--accent);
-  background: #0f1823; margin: 2px 12px 8px 0; padding: 12px 14px;
-  display: flex; flex-direction: column; gap: 10px;
+  border: 1px solid #2a3a4c; border-top: none; background: #0f1823; padding: 14px 16px;
 }
 .ptree-card-grid {
-  display: grid; grid-template-columns: 120px 1fr; gap: 5px 14px; font-size: 13px;
+  display: grid; grid-template-columns: 150px 1fr; gap: 10px 16px; font-size: 14px; align-items: start;
 }
-.ptree-card-k { color: #7f8ea0; }
-.ptree-card-v { color: #d8e2ea; word-break: break-all; white-space: pre-wrap; }
-.ptree-mono { font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace); font-size: 12.5px; }
+.ptree-card-k { color: #8b9bad; }
+.ptree-card-v { color: #d8e2ea; word-break: break-all; }
+.ptree-mono { font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace); font-size: 13px; }
 .ptree-sev { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
-.ptree-view-events { align-self: flex-start; }
+/* Command-line box with a copy button (Defender's scrollable cmdline). */
+.ptree-cmdbox { display: flex; align-items: flex-start; gap: 8px; }
+.ptree-cmdbox pre {
+  margin: 0; padding: 8px 10px; background: #0b131c; border: 1px solid #26313c; flex: 1 1 auto;
+  white-space: pre-wrap; word-break: break-all; max-height: 140px; overflow: auto; color: #c8d4de;
+}
+.ptree-hashval { display: inline-flex; align-items: center; gap: 8px; }
+.ptree-copy {
+  flex: 0 0 auto; background: #1a2736; border: 1px solid #2a3a4c; color: #c4d0da;
+  cursor: pointer; font-size: 12px; padding: 3px 8px; line-height: 1.4;
+}
+.ptree-copy:hover { border-color: var(--accent); color: #e6eef4; }
