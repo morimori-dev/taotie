@@ -394,6 +394,20 @@ export interface ProcessTreeEdge {
   count: number;
 }
 
+export interface ProcessNode {
+  key: string;
+  parent_key: string | null;
+  name: string;
+  pid: string | null;
+  guid: string | null;
+  command_line: string | null;
+  user_name: string | null;
+  first_seen_utc: string | null;
+  event_id: string;
+  severity: string | null;
+  has_finding: boolean;
+}
+
 export interface FileOpBin {
   bin_start_utc: string;
   created: number;

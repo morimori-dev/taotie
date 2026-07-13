@@ -551,24 +551,20 @@ impl DuckDbQueryLayer {
             return Ok(Vec::new());
         };
         let node_cap = bounded_limit(limit, 2000, 8000);
-        let sev_col = if self.table_has_column("lake/events_full", "severity")? {
-            "severity"
-        } else {
-            "NULL AS severity"
-        };
-        let find_col = if self.table_has_column("lake/events_full", "has_finding")? {
-            "has_finding"
-        } else {
-            "CAST(false AS BOOLEAN) AS has_finding"
-        };
+        // Overlay real detection severity per event from the findings read model.
+        // (event_rows.severity is the event's own level — mostly "info" for
+        // process events — so it is a poor highlight signal.) Identity fields are
+        // pulled from attributes_json with regexp_extract to match the rest of the
+        // codebase (no reliance on the DuckDB json extension).
+        let finding_severity = self.finding_severity_by_event()?;
         let conn = Connection::open_in_memory()?;
         let sql = format!(
-            "SELECT event_id, event_time_utc, process_name, user_name, {sev_col}, {find_col}, \
-                json_extract_string(attributes_json, '$.process_id') AS pid, \
-                json_extract_string(attributes_json, '$.process_guid') AS guid, \
-                json_extract_string(attributes_json, '$.parent_process_id') AS ppid, \
-                json_extract_string(attributes_json, '$.parent_process_guid') AS pguid, \
-                json_extract_string(attributes_json, '$.command_line') AS command_line \
+            "SELECT event_id, event_time_utc, process_name, user_name, \
+                NULLIF(regexp_extract(attributes_json, '\"process_id\":\"([^\"]*)\"', 1), '') AS pid, \
+                NULLIF(regexp_extract(attributes_json, '\"process_guid\":\"([^\"]*)\"', 1), '') AS guid, \
+                NULLIF(regexp_extract(attributes_json, '\"parent_process_id\":\"([^\"]*)\"', 1), '') AS ppid, \
+                NULLIF(regexp_extract(attributes_json, '\"parent_process_guid\":\"([^\"]*)\"', 1), '') AS pguid, \
+                NULLIF(regexp_extract(attributes_json, '\"command_line\":\"([^\"]*)\"', 1), '') AS command_line \
              FROM {expr} \
              WHERE event_action = 'process_created' AND process_name IS NOT NULL \
              ORDER BY event_time_utc \
@@ -581,26 +577,23 @@ impl DuckDbQueryLayer {
                 row.get::<_, Option<String>>(1)?, // event_time_utc
                 row.get::<_, Option<String>>(2)?, // process_name
                 row.get::<_, Option<String>>(3)?, // user_name
-                row.get::<_, Option<String>>(4)?, // severity
-                row.get::<_, Option<bool>>(5)?,   // has_finding
-                row.get::<_, Option<String>>(6)?, // pid
-                row.get::<_, Option<String>>(7)?, // guid
-                row.get::<_, Option<String>>(8)?, // ppid
-                row.get::<_, Option<String>>(9)?, // pguid
-                row.get::<_, Option<String>>(10)?, // command_line
+                row.get::<_, Option<String>>(4)?, // pid
+                row.get::<_, Option<String>>(5)?, // guid
+                row.get::<_, Option<String>>(6)?, // ppid
+                row.get::<_, Option<String>>(7)?, // pguid
+                row.get::<_, Option<String>>(8)?, // command_line
             ))
         })?;
         let clean = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
         let mut seen: HashSet<String> = HashSet::new();
         let mut nodes: Vec<ProcessNode> = Vec::new();
         for row in rows {
-            let (event_id, time, name, user, sev, finding, pid, guid, ppid, pguid, cmd) = row?;
+            let (event_id, time, name, user, pid, guid, ppid, pguid, cmd) = row?;
             let name = process_basename(&name.unwrap_or_default());
             if name.is_empty() {
                 continue;
             }
-            let (pid, guid, ppid, pguid) =
-                (clean(pid), clean(guid), clean(ppid), clean(pguid));
+            let (pid, guid, ppid, pguid) = (clean(pid), clean(guid), clean(ppid), clean(pguid));
             let key = match (&guid, &pid) {
                 (Some(g), _) => format!("guid:{g}"),
                 (None, Some(p)) => format!("pid:{p}"),
@@ -614,6 +607,7 @@ impl DuckDbQueryLayer {
                 (None, Some(p)) => Some(format!("pid:{p}")),
                 _ => None,
             };
+            let severity = finding_severity.get(&event_id).cloned();
             nodes.push(ProcessNode {
                 key,
                 parent_key,
@@ -624,8 +618,8 @@ impl DuckDbQueryLayer {
                 user_name: clean(user),
                 first_seen_utc: clean(time),
                 event_id,
-                severity: clean(sev),
-                has_finding: finding.unwrap_or(false),
+                has_finding: severity.is_some(),
+                severity,
             });
             if nodes.len() >= node_cap {
                 break;
@@ -633,6 +627,31 @@ impl DuckDbQueryLayer {
         }
         log_payload("process_tree_instances", &nodes, started);
         Ok(nodes)
+    }
+
+    /// event_id -> highest finding severity covering it, from the findings read
+    /// model. Used to overlay real detection severity onto process-tree nodes.
+    fn finding_severity_by_event(&self) -> Result<HashMap<String, String>> {
+        let Some(expr) = self.table_expr("lake/findings")? else {
+            return Ok(HashMap::new());
+        };
+        let conn = Connection::open_in_memory()?;
+        let sql = format!("SELECT severity, event_ids_json FROM {expr}");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows =
+            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        let mut map: HashMap<String, String> = HashMap::new();
+        for row in rows {
+            let (severity, event_ids_json) = row?;
+            let rank = severity_rank(&severity);
+            for event_id in parse_json_strings(&event_ids_json) {
+                let better = map.get(&event_id).map_or(true, |cur| severity_rank(cur) < rank);
+                if better {
+                    map.insert(event_id, severity.clone());
+                }
+            }
+        }
+        Ok(map)
     }
 
     /// USN journal file-operation timeline, bucketed by hour and split by reason,

@@ -4572,3 +4572,43 @@ html {
 .settings-segmented button:hover { background: #1e2a3d; color: #d8e2ea; }
 .settings-segmented button.active { background: var(--accent); color: var(--on-accent); font-weight: 700; }
 .settings-note { padding: 0 16px; margin: 0; font-size: 12px; }
+
+/* --- Instance-level process tree (process_tree tab) --- */
+.process-tree-panel { display: flex; flex-direction: column; min-height: 0; }
+.ptree-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.ptree-controls { display: flex; align-items: center; gap: 8px; }
+.ptree-filter {
+  background: #0f1722; border: 1px solid #26313c; color: #d8e2ea;
+  padding: 6px 10px; font-size: 12px; min-width: 240px; border-radius: 2px;
+}
+.ptree-filter:focus { outline: none; border-color: var(--accent); }
+.ptree-controls button {
+  background: transparent; border: 1px solid #26313c; color: #c4d0da;
+  padding: 6px 10px; font-size: 12px; border-radius: 2px; cursor: pointer;
+}
+.ptree-controls button:hover { border-color: var(--accent); color: #e6eef4; }
+.ptree-summary { padding: 6px 16px 10px; font-size: 12px; }
+.ptree-list {
+  border-top: 1px solid #26313c; overflow: auto; min-height: 0;
+  font-family: var(--mono, ui-monospace, "Cascadia Code", Menlo, Consolas, monospace);
+}
+.ptree-row {
+  display: flex; align-items: center; gap: 8px; min-height: 26px;
+  border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer; padding-right: 12px;
+  font-size: 12px; white-space: nowrap;
+}
+.ptree-row:hover { background: #16202e; }
+.ptree-row.has-finding { background: rgba(220, 70, 70, 0.06); }
+.ptree-row.has-finding:hover { background: rgba(220, 70, 70, 0.12); }
+.ptree-caret {
+  flex: 0 0 auto; width: 16px; height: 16px; line-height: 16px; text-align: center;
+  background: transparent; border: none; color: #7f8ea0; cursor: pointer; font-size: 10px; padding: 0;
+}
+.ptree-caret-empty { visibility: hidden; }
+.ptree-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+.ptree-name { color: #e6eef4; font-weight: 600; }
+.ptree-pid { color: #7f8ea0; font-size: 11px; }
+.ptree-cmd {
+  color: #9fb0c0; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
+}
+.ptree-meta { margin-left: auto; color: #6f7d8c; font-size: 11px; }

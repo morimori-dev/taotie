@@ -56,6 +56,7 @@ import type {
   TimelineBin,
   EventTimelineBin,
   TimestompPoint,
+  ProcessNode,
   ProcessTreeEdge,
   FileOpBin,
   BeaconIntervalBin,
@@ -508,6 +509,10 @@ export function getTimestompScatter(caseRoot: string): Promise<TimestompPoint[]>
 
 export function getProcessTree(caseRoot: string): Promise<ProcessTreeEdge[]> {
   return call('get_process_tree', { caseRoot }, () => []);
+}
+
+export function getProcessTreeInstances(caseRoot: string): Promise<ProcessNode[]> {
+  return call('get_process_tree_instances', { caseRoot }, () => []);
 }
 
 export function getFileOpTimeline(caseRoot: string): Promise<FileOpBin[]> {
