@@ -1,0 +1,28 @@
+[package]
+name = "taotie-api"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+ed25519-dalek.workspace = true
+regex = "1"
+serde_yaml = "0.9"
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+taotie-jobs = { path = "../taotie-jobs" }
+taotie-parsers = { path = "../taotie-parsers" }
+taotie-schema = { path = "../taotie-schema" }
+taotie-search = { path = "../taotie-search" }
+taotie-storage = { path = "../taotie-storage" }
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+flate2.workspace = true
+tempfile.workspace = true

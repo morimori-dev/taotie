@@ -1,0 +1,20 @@
+[package]
+name = "taotie-parsers"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+encoding_rs.workspace = true
+evtx.workspace = true
+flate2.workspace = true
+prefetch-core.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+taotie-schema = { path = "../taotie-schema" }
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

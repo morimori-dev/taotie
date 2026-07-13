@@ -1,0 +1,11 @@
+[package]
+name = "taotie-mcp"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+description = "Read-only MCP (Model Context Protocol) stdio server over a taotie case workspace"
+
+[dependencies]
+taotie-api = { path = "../taotie-api" }
+taotie-schema = { path = "../taotie-schema" }
+serde_json = { workspace = true }

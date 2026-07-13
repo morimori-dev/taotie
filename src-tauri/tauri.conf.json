@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "taotie",
+  "version": "0.1.2",
+  "identifier": "local.taotie.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5174",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../ui/dist"
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Local-first DFIR timeline & detection workbench",
+    "longDescription": "Taotie ingests Windows forensic artifacts into a local DuckDB lake and provides a unified timeline, sigma + heuristic detection, cross-artifact correlation, and analysis charts. Everything runs offline on your machine."
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "taotie",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 980,
+        "minHeight": 680
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

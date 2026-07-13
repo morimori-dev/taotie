@@ -1,0 +1,17 @@
+[package]
+name = "taotie-search"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+sha2.workspace = true
+tantivy.workspace = true
+taotie-schema = { path = "../taotie-schema" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

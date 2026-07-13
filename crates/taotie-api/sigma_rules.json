@@ -1,0 +1,677 @@
+[
+  {
+    "id": "sigma-security-log-cleared",
+    "title": "セキュリティイベントログの消去 (T1070.001)",
+    "level": "high",
+    "tags": [
+      "attack.t1070.001",
+      "attack.defense_evasion"
+    ],
+    "logsource": {
+      "service": "security"
+    },
+    "detection": {
+      "selection": {
+        "EventID": "1102"
+      },
+      "condition": "selection"
+    },
+    "description": "Security イベントログが消去された際に記録される EventID 1102。攻撃者が侵害後の痕跡を隠すためにログを消すアンチフォレンジックの典型で、正規運用でログ全消去は稀。消去の直前後のアクティビティを重点調査する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1070/001/",
+      "https://learn.microsoft.com/windows/security/threat-protection/auditing/event-1102"
+    ],
+    "falsepositives": [
+      "監査ログの意図的な再構成やテスト環境でのリセット",
+      "SIEM 移行時のログクリア"
+    ]
+  },
+  {
+    "id": "sigma-wevtutil-clear-log",
+    "title": "wevtutil によるイベントログ消去 (T1070.001)",
+    "level": "high",
+    "tags": [
+      "attack.t1070.001",
+      "attack.defense_evasion"
+    ],
+    "detection": {
+      "tool": [
+        "wevtutil"
+      ],
+      "action": [
+        "cl ",
+        "clear-log",
+        "clearlog"
+      ],
+      "condition": "tool and action"
+    },
+    "description": "wevtutil.exe の cl / clear-log によるイベントログ消去をプロセス実行(4688 / Sysmon 1)のコマンドラインから検出。ログ消去による証跡破壊の兆候で、対象チャネル名から何を隠そうとしたかが分かる。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1070/001/",
+      "https://lolbas-project.github.io/lolbas/Binaries/Wevtutil/"
+    ],
+    "falsepositives": [
+      "管理者による意図的なログ整理・容量対策"
+    ]
+  },
+  {
+    "id": "sigma-comsvcs-lsass-minidump",
+    "title": "comsvcs.dll MiniDump による LSASS ダンプ (T1003.001)",
+    "level": "critical",
+    "tags": [
+      "attack.t1003.001",
+      "attack.credential_access"
+    ],
+    "detection": {
+      "dll": [
+        "comsvcs"
+      ],
+      "func": [
+        "minidump"
+      ],
+      "condition": "dll and func"
+    },
+    "description": "comsvcs.dll の MiniDump 関数を rundll32 経由で呼び出し、LSASS プロセスのメモリをダンプする資格情報窃取の常套手段。ダンプから平文パスワード/ハッシュ/Kerberos チケットが抽出される。正規運用でこの呼び出しはほぼ発生しない。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1003/001/",
+      "https://lolbas-project.github.io/lolbas/Libraries/Comsvcs/"
+    ],
+    "falsepositives": [
+      "ほぼ無し。EDR/クラッシュ解析ツールが同等 API を使う場合のみ要確認"
+    ]
+  },
+  {
+    "id": "sigma-ntds-extraction",
+    "title": "NTDS.dit 抽出 (T1003.003)",
+    "level": "critical",
+    "tags": [
+      "attack.t1003.003",
+      "attack.credential_access"
+    ],
+    "detection": {
+      "ntdsutil": [
+        "ntdsutil"
+      ],
+      "ntdsfile": [
+        "ntds.dit"
+      ],
+      "condition": "1 of them"
+    },
+    "description": "ドメインコントローラの資格情報データベース NTDS.dit の抽出(ntdsutil / VSS スナップショット経由のコピー等)。取得されると全ドメインアカウントのハッシュが漏れ、DCSync 相当のドメイン全体侵害に直結する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1003/003/",
+      "https://learn.microsoft.com/windows-server/administration/windows-commands/ntdsutil"
+    ],
+    "falsepositives": [
+      "正規の Active Directory バックアップ/リストア運用"
+    ]
+  },
+  {
+    "id": "sigma-psexec-service",
+    "title": "PsExec 系サービスによる遠隔実行 (T1569.002)",
+    "level": "high",
+    "tags": [
+      "attack.t1569.002",
+      "attack.execution"
+    ],
+    "detection": {
+      "svc": [
+        "psexesvc",
+        "paexec",
+        "remcomsvc"
+      ],
+      "condition": "svc"
+    },
+    "description": "PsExec 系ツールが遠隔実行のために作成する一時サービス(PSEXESVC 等)のインストール(EventID 7045)。横展開(lateral movement)や遠隔コマンド実行の兆候。サービス名・実行元ホストを相関して侵害範囲を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1569/002/",
+      "https://learn.microsoft.com/sysinternals/downloads/psexec"
+    ],
+    "falsepositives": [
+      "管理者による PsExec の正規利用(運用自動化・IT サポート)"
+    ]
+  },
+  {
+    "id": "sigma-encoded-powershell",
+    "title": "エンコード済み PowerShell 実行 (T1059.001)",
+    "level": "high",
+    "tags": [
+      "attack.t1059.001",
+      "attack.execution"
+    ],
+    "detection": {
+      "ps": [
+        "powershell",
+        "pwsh"
+      ],
+      "enc": [
+        "-enc",
+        "-encodedcommand",
+        "frombase64string",
+        "-e jab",
+        "-ec "
+      ],
+      "condition": "ps and enc"
+    },
+    "description": "-EncodedCommand (-enc) で Base64 難読化した PowerShell の実行。検知回避・難読化の典型で、ダウンローダやインメモリ実行など悪性スクリプトに多用される。デコードしたコマンド内容の確認が必須。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1059/001/"
+    ],
+    "falsepositives": [
+      "一部の正規管理スクリプト/インストーラが -enc を使用することがある"
+    ]
+  },
+  {
+    "id": "sigma-rundll32-suspicious",
+    "title": "疑わしい rundll32 実行 (T1218.011)",
+    "level": "medium",
+    "tags": [
+      "attack.t1218.011",
+      "attack.defense_evasion"
+    ],
+    "detection": {
+      "img": [
+        "rundll32"
+      ],
+      "susp": [
+        "javascript:",
+        "mshtml",
+        ",#",
+        "url.dll,openurl",
+        "shell32.dll,control_rundll"
+      ],
+      "condition": "img and susp"
+    },
+    "description": "rundll32.exe による疑わしい DLL 実行(引数の欠落や異常なエクスポート呼び出し等)。LOLBAS を悪用して任意コードを正規プロセス経由で実行し検知を回避する手口。呼び出された DLL とエクスポートを精査する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1218/011/",
+      "https://lolbas-project.github.io/lolbas/Binaries/Rundll32/"
+    ],
+    "falsepositives": [
+      "正規アプリケーションが rundll32 経由で機能を呼び出す場合"
+    ]
+  },
+  {
+    "id": "sigma-kerberoast-rc4",
+    "title": "Kerberoasting (RC4 TGS 要求) (T1558.003)",
+    "level": "high",
+    "tags": [
+      "attack.t1558.003",
+      "attack.credential_access"
+    ],
+    "logsource": {
+      "service": "security"
+    },
+    "detection": {
+      "selection": {
+        "EventID": "4769",
+        "TicketEncryptionType": "0x17"
+      },
+      "filter": {
+        "ServiceName|contains": "krbtgt"
+      },
+      "condition": "selection and not filter"
+    },
+    "description": "RC4(暗号種別 0x17)の TGS チケット要求(EventID 4769)の多発。サービスアカウントのチケットを取得しオフラインでパスワードを解読する Kerberoasting の兆候。要求元アカウントと対象 SPN を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1558/003/"
+    ],
+    "falsepositives": [
+      "RC4 を常用する旧構成環境では誤検知しうる。AES 強制で切り分ける"
+    ]
+  },
+  {
+    "id": "sigma-asrep-roast",
+    "title": "AS-REP Roasting (事前認証なし) (T1558.004)",
+    "level": "high",
+    "tags": [
+      "attack.t1558.004",
+      "attack.credential_access"
+    ],
+    "logsource": {
+      "service": "security"
+    },
+    "detection": {
+      "selection": {
+        "EventID": "4768",
+        "PreAuthType": "0"
+      },
+      "condition": "selection"
+    },
+    "description": "事前認証(Kerberos pre-authentication)が無効なアカウントへの AS-REQ に対する AS-REP。応答からハッシュを取得しオフライン解読する AS-REP Roasting の兆候。DONT_REQ_PREAUTH フラグを持つアカウントを棚卸しする。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1558/004/"
+    ],
+    "falsepositives": [
+      "互換性のため意図的に pre-auth を無効化した運用アカウント"
+    ]
+  },
+  {
+    "id": "sigma-account-created",
+    "title": "ユーザーアカウント作成 (T1136.001)",
+    "level": "medium",
+    "tags": [
+      "attack.t1136.001",
+      "attack.persistence"
+    ],
+    "logsource": {
+      "service": "security"
+    },
+    "detection": {
+      "selection": {
+        "EventID": "4720"
+      },
+      "condition": "selection"
+    },
+    "description": "ローカル/ドメインのユーザーアカウント作成(EventID 4720)。攻撃者による永続化用バックドアアカウント作成の可能性。作成者・作成時刻・直後の権限付与を相関して正当性を判断する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1136/001/",
+      "https://learn.microsoft.com/windows/security/threat-protection/auditing/event-4720"
+    ],
+    "falsepositives": [
+      "正規の入退社・アカウント発行運用(発生頻度が高い)"
+    ]
+  },
+  {
+    "id": "sigma-added-to-admin-group",
+    "title": "特権グループへのメンバー追加 (T1098)",
+    "level": "high",
+    "tags": [
+      "attack.t1098",
+      "attack.persistence"
+    ],
+    "logsource": {
+      "service": "security"
+    },
+    "detection": {
+      "selection": {
+        "EventID": [
+          "4728",
+          "4732",
+          "4756"
+        ]
+      },
+      "condition": "selection"
+    },
+    "description": "特権グループ(Administrators / Domain Admins 等)へのメンバー追加(EventID 4728/4732/4756)。権限昇格・永続化の兆候。追加された主体と実行者、直前のアカウント作成との相関を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1098/",
+      "https://learn.microsoft.com/windows/security/threat-protection/auditing/event-4732"
+    ],
+    "falsepositives": [
+      "正規の権限付与・ロール変更"
+    ]
+  },
+  {
+    "id": "sigma-disable-defender",
+    "title": "Windows Defender の無効化 (T1562.001)",
+    "level": "high",
+    "tags": [
+      "attack.t1562.001",
+      "attack.defense_evasion"
+    ],
+    "detection": {
+      "cmd": [
+        "set-mppreference",
+        "add-mppreference"
+      ],
+      "act": [
+        "disable",
+        "-exclusionpath",
+        "-exclusionextension"
+      ],
+      "condition": "cmd and act"
+    },
+    "description": "Windows Defender の無効化(リアルタイム保護 OFF、Set-MpPreference、該当レジストリ変更等)。防御回避のため EDR/AV を停止する典型手口で、直後に悪性ペイロードが実行される可能性が高い。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1562/001/"
+    ],
+    "falsepositives": [
+      "検証・トラブルシュートのための一時的な無効化(変更管理記録と突合)"
+    ]
+  },
+  {
+    "id": "sigma-mimikatz-indicators",
+    "title": "Mimikatz の痕跡 (T1003)",
+    "level": "critical",
+    "tags": [
+      "attack.t1003",
+      "attack.credential_access"
+    ],
+    "detection": {
+      "keywords": [
+        "sekurlsa",
+        "privilege::debug",
+        "lsadump",
+        "dumpcreds",
+        "kerberos::",
+        "crypto::",
+        "gentilkiwi"
+      ],
+      "condition": "keywords"
+    },
+    "description": "Mimikatz 特有の文字列/挙動(sekurlsa::logonpasswords, privilege::debug 等)。資格情報窃取ツールの実行痕跡で、LSASS からの資格情報抽出が行われた可能性が高い。実行元と時刻を軸に横展開を追跡する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1003/",
+      "https://github.com/gentilkiwi/mimikatz"
+    ],
+    "falsepositives": [
+      "セキュリティ検証・レッドチーム演習(実施記録と突合)"
+    ]
+  },
+  {
+    "id": "sigma-schtasks-create",
+    "title": "schtasks による永続化/実行 (T1053.005)",
+    "level": "high",
+    "description": "schtasks.exe による スケジュールタスクの作成。攻撃者が永続化や遅延実行、SYSTEM 権限での実行に多用する。作成されたタスク名・実行コマンド・トリガを確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1053/005/"
+    ],
+    "falsepositives": [
+      "ソフトウェア導入や管理スクリプトによる正規のタスク作成"
+    ],
+    "tags": [
+      "attack.t1053.005",
+      "attack.execution"
+    ],
+    "detection": {
+      "tool": [
+        "schtasks"
+      ],
+      "act": [
+        "/create",
+        "-create"
+      ],
+      "condition": "tool and act"
+    }
+  },
+  {
+    "id": "sigma-certutil-download",
+    "title": "certutil によるファイルダウンロード (T1105)",
+    "level": "high",
+    "description": "certutil.exe の urlcache 機能を悪用したリモートファイルの取得。LOLBin による検知回避付きダウンロードで、ペイロード配布の典型。取得元 URL と保存先を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1105/",
+      "https://lolbas-project.github.io/lolbas/Binaries/Certutil/"
+    ],
+    "falsepositives": [
+      "証明書関連の正規運用(urlcache 併用は稀)"
+    ],
+    "tags": [
+      "attack.t1105",
+      "attack.command_and_control"
+    ],
+    "detection": {
+      "tool": [
+        "certutil"
+      ],
+      "dl": [
+        "urlcache",
+        "-split -f",
+        "verifyctl"
+      ],
+      "condition": "tool and dl"
+    }
+  },
+  {
+    "id": "sigma-bitsadmin-transfer",
+    "title": "bitsadmin によるダウンロード (T1197)",
+    "level": "high",
+    "description": "bitsadmin.exe による BITS ジョブ経由のファイル転送。バックグラウンド転送で検知を回避しつつペイロードを取得する手口。転送元/先を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1197/",
+      "https://lolbas-project.github.io/lolbas/Binaries/Bitsadmin/"
+    ],
+    "falsepositives": [
+      "更新配布等の正規 BITS 利用"
+    ],
+    "tags": [
+      "attack.t1197",
+      "attack.t1105",
+      "attack.defense_evasion"
+    ],
+    "detection": {
+      "tool": [
+        "bitsadmin"
+      ],
+      "act": [
+        "/transfer",
+        "/addfile",
+        "/download"
+      ],
+      "condition": "tool and act"
+    }
+  },
+  {
+    "id": "sigma-shadowcopy-delete",
+    "title": "ボリュームシャドウコピーの削除 (T1490)",
+    "level": "critical",
+    "description": "vssadmin / wmic / wbadmin によるシャドウコピー・バックアップの削除。復旧を妨害するランサムウェアの常套手段で、暗号化直前に実行されることが多い。実行元と時刻を軸に前後を追跡する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1490/"
+    ],
+    "falsepositives": [
+      "バックアップ製品による正規のシャドウ管理(稀)"
+    ],
+    "tags": [
+      "attack.t1490",
+      "attack.impact"
+    ],
+    "detection": {
+      "del": [
+        "vssadmin delete shadows",
+        "shadowcopy delete",
+        "wbadmin delete catalog",
+        "win32_shadowcopy",
+        "delete shadows /all"
+      ],
+      "condition": "del"
+    }
+  },
+  {
+    "id": "sigma-mshta-suspicious",
+    "title": "mshta によるリモート/スクリプト実行 (T1218.005)",
+    "level": "high",
+    "description": "mshta.exe による HTA/スクリプトの実行。リモート HTA や javascript:/vbscript: を用いて任意コードを正規プロセス経由で実行し検知を回避する。呼び出し先を精査する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1218/005/",
+      "https://lolbas-project.github.io/lolbas/Binaries/Mshta/"
+    ],
+    "falsepositives": [
+      "レガシー業務アプリの HTA 利用"
+    ],
+    "tags": [
+      "attack.t1218.005",
+      "attack.defense_evasion"
+    ],
+    "detection": {
+      "tool": [
+        "mshta"
+      ],
+      "susp": [
+        "http://",
+        "https://",
+        "javascript:",
+        "vbscript:",
+        ".hta"
+      ],
+      "condition": "tool and susp"
+    }
+  },
+  {
+    "id": "sigma-regsvr32-scrobj",
+    "title": "regsvr32 による COM スクリプト/リモート実行 (T1218.010)",
+    "level": "high",
+    "description": "regsvr32.exe を悪用した scrobj/リモート scriptlet の実行(Squiblydoo)。署名済みバイナリ経由で任意コードを実行し検知を回避する。呼び出された scriptlet を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1218/010/",
+      "https://lolbas-project.github.io/lolbas/Binaries/Regsvr32/"
+    ],
+    "falsepositives": [
+      "正規 DLL の登録(scrobj/http 併用は稀)"
+    ],
+    "tags": [
+      "attack.t1218.010",
+      "attack.defense_evasion"
+    ],
+    "detection": {
+      "tool": [
+        "regsvr32"
+      ],
+      "susp": [
+        "scrobj",
+        "/i:http",
+        "-i:http",
+        "/i:\\\\"
+      ],
+      "condition": "tool and susp"
+    }
+  },
+  {
+    "id": "sigma-wmic-process-call",
+    "title": "wmic による遠隔/プロセス実行 (T1047)",
+    "level": "medium",
+    "description": "wmic process call create による実行、あるいは /node: を用いた遠隔実行。WMI を悪用したファイルレス実行・横展開の兆候。対象ノードと起動コマンドを確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1047/"
+    ],
+    "falsepositives": [
+      "管理自動化での WMIC 利用"
+    ],
+    "tags": [
+      "attack.t1047",
+      "attack.execution"
+    ],
+    "detection": {
+      "tool": [
+        "wmic"
+      ],
+      "act": [
+        "process call create",
+        "process call",
+        "/node:"
+      ],
+      "condition": "tool and act"
+    }
+  },
+  {
+    "id": "sigma-powershell-download-cradle",
+    "title": "PowerShell ダウンロードクレードル (T1059.001)",
+    "level": "high",
+    "description": "PowerShell による遠隔コード取得・実行(download cradle)。DownloadString/Invoke-WebRequest/Net.WebClient 等でペイロードを取得し IEX で実行する典型。取得元と実行内容を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1059/001/"
+    ],
+    "falsepositives": [
+      "正規の PowerShell 配布/更新スクリプト"
+    ],
+    "tags": [
+      "attack.t1059.001",
+      "attack.t1105",
+      "attack.execution"
+    ],
+    "detection": {
+      "ps": [
+        "powershell",
+        "pwsh"
+      ],
+      "dl": [
+        "downloadstring",
+        "downloadfile",
+        "invoke-webrequest",
+        "net.webclient",
+        "start-bitstransfer",
+        "iex(",
+        "invoke-expression"
+      ],
+      "condition": "ps and dl"
+    }
+  },
+  {
+    "id": "sigma-run-key-persistence",
+    "title": "Run キーによる永続化 (T1547.001)",
+    "level": "high",
+    "description": "レジストリ Run/RunOnce キーへの登録による自動起動の永続化。reg add や *-ItemProperty でユーザ/マシンのログオン時実行を仕込む。登録値と実行先を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1547/001/"
+    ],
+    "falsepositives": [
+      "アプリの自動起動登録(正規インストーラ)"
+    ],
+    "tags": [
+      "attack.t1547.001",
+      "attack.persistence"
+    ],
+    "detection": {
+      "key": [
+        "currentversion\\run",
+        "currentversion\\runonce"
+      ],
+      "op": [
+        "reg add",
+        "reg.exe add",
+        "new-itemproperty",
+        "set-itemproperty"
+      ],
+      "condition": "key and op"
+    }
+  },
+  {
+    "id": "sigma-defender-exclusion",
+    "title": "Defender 除外の追加 (T1562.001)",
+    "level": "high",
+    "description": "Add-MpPreference / Set-MpPreference による Windows Defender の除外(パス/拡張子/プロセス)追加。スキャン対象から自身を外して検知を回避する手口。除外対象を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1562/001/"
+    ],
+    "falsepositives": [
+      "運用上の意図的な除外(変更管理と突合)"
+    ],
+    "tags": [
+      "attack.t1562.001",
+      "attack.defense_evasion"
+    ],
+    "detection": {
+      "cmd": [
+        "add-mppreference",
+        "set-mppreference"
+      ],
+      "excl": [
+        "exclusionpath",
+        "exclusionextension",
+        "exclusionprocess"
+      ],
+      "condition": "cmd and excl"
+    }
+  },
+  {
+    "id": "sigma-net-localgroup-admin",
+    "title": "net localgroup による管理者追加 (T1098)",
+    "level": "high",
+    "description": "net localgroup administrators /add による特権グループへのメンバー追加(CLI)。権限昇格・永続化の兆候。追加された主体と実行者を確認する。",
+    "references": [
+      "https://attack.mitre.org/techniques/T1098/"
+    ],
+    "falsepositives": [
+      "正規の権限付与運用"
+    ],
+    "tags": [
+      "attack.t1098",
+      "attack.persistence"
+    ],
+    "detection": {
+      "tool": [
+        "localgroup"
+      ],
+      "grp": [
+        "administrators",
+        "administradores",
+        "administratoren"
+      ],
+      "act": [
+        "/add"
+      ],
+      "condition": "tool and grp and act"
+    }
+  }
+]

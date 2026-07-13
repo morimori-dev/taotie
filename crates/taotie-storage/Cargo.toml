@@ -1,0 +1,23 @@
+[package]
+name = "taotie-storage"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+arrow-array.workspace = true
+arrow-schema.workspace = true
+chrono.workspace = true
+duckdb.workspace = true
+hex.workspace = true
+parquet.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+taotie-schema = { path = "../taotie-schema" }
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
