@@ -266,6 +266,12 @@ environment is required.
 - Installer: download `taotie_<version>_x64-setup.exe`, run it, and launch
   Taotie from the Start menu. The installer bootstraps WebView2 automatically.
 
+> The Windows binaries are **not code-signed yet**, so SmartScreen shows a blue
+> *"Windows protected your PC — unknown publisher"* prompt the first time. This
+> is expected for a new unsigned app, not a malware detection: click
+> **More info → Run anyway**. Reputation builds over time, and signing is on the
+> roadmap.
+
 **Linux**
 
 1. Download `taotie_<version>_amd64.AppImage`, place it anywhere, and run it:
