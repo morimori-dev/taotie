@@ -4612,3 +4612,28 @@ html {
   color: #9fb0c0; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
 }
 .ptree-meta { margin-left: auto; color: #6f7d8c; font-size: 11px; }
+
+/* --- Process tree: two-pane body + detail panel --- */
+.ptree-body { display: flex; min-height: 0; flex: 1; overflow: hidden; }
+.ptree-body .ptree-list { flex: 1; }
+.ptree-row.selected { background: var(--sel-bg, #14324a); }
+.ptree-row.selected:hover { background: var(--sel-bg, #14324a); }
+.ptree-detail {
+  flex: 0 0 320px; border-left: 1px solid #26313c; padding: 14px 16px;
+  overflow: auto; display: flex; flex-direction: column; gap: 10px;
+}
+.ptree-detail-empty { align-items: center; justify-content: center; text-align: center; }
+.ptree-detail-head { display: flex; align-items: center; gap: 8px; }
+.ptree-detail-name { font-weight: 700; font-size: 14px; color: #e6eef4; }
+.ptree-sev { margin-left: auto; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+.ptree-detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
+.ptree-detail-grid dt { color: #7f8ea0; }
+.ptree-detail-grid dd { margin: 0; color: #d8e2ea; word-break: break-all; }
+.ptree-mono { font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace); font-size: 11px; }
+.ptree-detail-label { font-size: 11px; color: #7f8ea0; margin-top: 4px; }
+.ptree-detail-cmd {
+  margin: 0; padding: 8px 10px; background: #0f1722; border: 1px solid #26313c;
+  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace); font-size: 11px;
+  color: #c8d4de; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto;
+}
+.ptree-view-events { margin-top: auto; align-self: flex-start; }
