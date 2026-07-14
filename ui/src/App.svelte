@@ -55,6 +55,7 @@
     getTimestompScatter,
     getProcessTree,
     getProcessTreeInstances,
+    getProcessRelatedEvents,
     getFileOpTimeline,
     getBeaconIntervals,
     getTriageActions,
@@ -133,6 +134,7 @@
     EventTimelineBin,
     TimestompPoint,
     ProcessNode,
+    ProcessRelatedEvent,
     ProcessTreeEdge,
     FileOpBin,
     BeaconIntervalBin,
@@ -480,7 +482,11 @@
   let processTreeStatus = '';
   let processTreeFilter = '';
   let processTreeExpanded: Set<string> = new Set();
+  let processDangerOnly = false;
   let selectedProcessNode: ProcessNode | null = null;
+  let processRelated: ProcessRelatedEvent[] = [];
+  let processRelatedToken = 0;
+  let processRelatedLoading = false;
   let fileOpBins: FileOpBin[] = [];
   let beaconBins: BeaconIntervalBin[] = [];
   let timelineSelectedBin: { startUtc: string; label: string } | null = null;
@@ -2301,8 +2307,8 @@
       processTreeStatus =
         (summary?.event_count ?? 0) > 0 ? $t('ptree.no_process_events') : '';
     }
-    // 初期表示: ルートのみ見せ、検知を含むノードの祖先は自動展開。
-    processTreeExpanded = defaultExpandedProcessKeys(processNodes);
+    // 初期表示は全展開にしてツリー構造(接続線)がすぐ見えるようにする。
+    processTreeExpanded = new Set(processNodes.map((node) => node.key));
     selectedProcessNode = null;
   }
 
@@ -2347,41 +2353,60 @@
     return node.has_finding && processSeverityRank(node.severity) >= 4;
   }
 
-  // 注目ノードまでの祖先を初期展開キーに含める。
-  function defaultExpandedProcessKeys(nodes: ProcessNode[]): Set<string> {
-    const byKey = new Map<string, ProcessNode>();
-    for (const node of nodes) byKey.set(node.key, node);
-    const expanded = new Set<string>();
-    for (const node of nodes) {
-      if (!isNotableProcess(node)) continue;
-      let cursor: ProcessNode | undefined = node;
-      let guard = 0;
-      while (cursor?.parent_key && guard < 64) {
-        const parent = byKey.get(cursor.parent_key);
-        if (!parent) break;
-        expanded.add(parent.key);
-        cursor = parent;
-        guard += 1;
-      }
-    }
-    return expanded;
-  }
-
   $: processForest = buildProcessForest(processNodes);
+  // 注目(high/critical)ノードとその祖先だけを残す集合(危険な系譜のみ表示用)。
+  $: processDangerKeep = computeProcessDangerKeep(processNodes, processForest);
   // 展開状態とフィルタから、描画する行(node + 深さ + 子有無)を平坦化。
   $: processTreeRows = flattenProcessForest(
     processForest,
     processTreeExpanded,
-    processTreeFilter
+    processTreeFilter,
+    processDangerOnly ? processDangerKeep : null
   );
   $: processFindingCount = processNodes.filter((node) => isNotableProcess(node)).length;
+
+  function computeProcessDangerKeep(
+    nodes: ProcessNode[],
+    forest: ReturnType<typeof buildProcessForest>
+  ): Set<string> {
+    const keep = new Set<string>();
+    for (const node of nodes) {
+      if (!isNotableProcess(node)) continue;
+      keep.add(node.key);
+      let cursor: ProcessNode | undefined = node;
+      let guard = 0;
+      while (cursor?.parent_key && forest.byKey.has(cursor.parent_key) && guard < 128) {
+        keep.add(cursor.parent_key);
+        cursor = forest.byKey.get(cursor.parent_key);
+        guard += 1;
+      }
+    }
+    return keep;
+  }
 
   function flattenProcessForest(
     forest: ReturnType<typeof buildProcessForest>,
     expanded: Set<string>,
-    filter: string
-  ): Array<{ node: ProcessNode; depth: number; hasChildren: boolean }> {
+    filter: string,
+    restrict: Set<string> | null
+  ): Array<{ node: ProcessNode; depth: number; hasChildren: boolean; guides: boolean[] }> {
     const needle = filter.trim().toLowerCase();
+    // 危険な系譜のみ: restrict に含まれるノードだけを常に展開して表示。
+    if (restrict) {
+      const rows: Array<{
+        node: ProcessNode;
+        depth: number;
+        hasChildren: boolean;
+        guides: boolean[];
+      }> = [];
+      const visit = (node: ProcessNode, depth: number, guides: boolean[]) => {
+        const kids = (forest.children.get(node.key) ?? []).filter((k) => restrict.has(k.key));
+        rows.push({ node, depth, hasChildren: kids.length > 0, guides });
+        kids.forEach((kid, i) => visit(kid, depth + 1, [...guides, i < kids.length - 1]));
+      };
+      for (const root of forest.roots.filter((r) => restrict.has(r.key))) visit(root, 0, []);
+      return rows;
+    }
     // フィルタ時は展開状態を無視し、名前/コマンドラインが一致する行を平坦表示。
     if (needle) {
       return forest.roots
@@ -2397,18 +2422,22 @@
         .map((node) => ({
           node,
           depth: 0,
-          hasChildren: (forest.children.get(node.key) ?? []).length > 0
+          hasChildren: (forest.children.get(node.key) ?? []).length > 0,
+          guides: [] as boolean[]
         }));
     }
-    const rows: Array<{ node: ProcessNode; depth: number; hasChildren: boolean }> = [];
-    const visit = (node: ProcessNode, depth: number) => {
+    // guides[i] = そのレベル i の祖先に「次の兄弟」がいるか(縦線を引くか)。
+    // 末尾要素は自ノードの兄弟有無(├ か └ か)を表す。
+    const rows: Array<{ node: ProcessNode; depth: number; hasChildren: boolean; guides: boolean[] }> =
+      [];
+    const visit = (node: ProcessNode, depth: number, guides: boolean[]) => {
       const kids = forest.children.get(node.key) ?? [];
-      rows.push({ node, depth, hasChildren: kids.length > 0 });
+      rows.push({ node, depth, hasChildren: kids.length > 0, guides });
       if (expanded.has(node.key)) {
-        for (const kid of kids) visit(kid, depth + 1);
+        kids.forEach((kid, i) => visit(kid, depth + 1, [...guides, i < kids.length - 1]));
       }
     };
-    for (const root of forest.roots) visit(root, 0);
+    for (const root of forest.roots) visit(root, 0, []);
     return rows;
   }
 
@@ -2427,8 +2456,97 @@
     processTreeExpanded = new Set();
   }
 
-  function selectProcessNode(node: ProcessNode) {
+  // ノード本体クリック: 子があれば開閉し、詳細ドロワーを開く。
+  function activateProcessNode(node: ProcessNode, hasChildren: boolean) {
+    if (hasChildren) toggleProcessNode(node.key);
     selectedProcessNode = node;
+  }
+
+  function closeProcessDetail() {
+    selectedProcessNode = null;
+  }
+
+  async function drillDownProcessNode(node: ProcessNode) {
+    await drillDownToEvents({ search: `process:"${node.name}"` });
+  }
+
+  // 同名 or 同ハッシュの他インスタンス(自分以外)。
+  function processOtherInstances(node: ProcessNode): ProcessNode[] {
+    return processNodes.filter(
+      (p) => p.key !== node.key && (p.name === node.name || (!!node.hash && p.hash === node.hash))
+    );
+  }
+
+  // プロセス生成時刻の前後 ±15分の窓(イベント一覧のタイムライン文脈用)。
+  function processTimeWindow(node: ProcessNode): { startUtc?: string; endUtc?: string } {
+    const t = node.first_seen_utc;
+    if (!t) return {};
+    const ms = Date.parse(t);
+    if (Number.isNaN(ms)) return {};
+    const iso = (v: number) => new Date(v).toISOString().slice(0, 16);
+    return { startUtc: iso(ms - 15 * 60000), endUtc: iso(ms + 15 * 60000) };
+  }
+
+  async function drillProcessTimeline(node: ProcessNode) {
+    const win = processTimeWindow(node);
+    if (!win.startUtc) return;
+    await drillDownToEvents({ startUtc: win.startUtc, endUtc: win.endUtc });
+  }
+
+  // 選択プロセス(同一 ProcessGuid)に紐づく非生成イベント(ネット/ファイル/レジストリ等)を読み込む。
+  async function loadProcessRelated(node: ProcessNode | null) {
+    processRelated = [];
+    if (!node?.guid) {
+      processRelatedLoading = false;
+      return;
+    }
+    const token = ++processRelatedToken;
+    processRelatedLoading = true;
+    const rows = await getProcessRelatedEvents(caseRoot, node.guid).catch(
+      () => [] as ProcessRelatedEvent[]
+    );
+    if (token === processRelatedToken) {
+      processRelated = rows;
+      processRelatedLoading = false;
+    }
+  }
+  $: void loadProcessRelated(selectedProcessNode);
+
+  // 関連イベントの大分類(ネット/ファイル/レジストリ/その他)。スレッド/インジェクション/
+  // イメージロード/名前付きパイプ等はファイル/ネットに誤分類しないよう先に other へ。
+  function relatedCategory(e: ProcessRelatedEvent): string {
+    const a = `${e.event_action} ${e.artifact_type}`.toLowerCase();
+    if (/thread|inject|image_load|process_access|process_terminat|pipe/.test(a)) return 'other';
+    if (/network|connect|dns|socket|http|tcp|udp|beacon/.test(a)) return 'network';
+    if (/registry|regvalue|regkey|reg_/.test(a)) return 'registry';
+    if (/file|usn|mft|create|delete|rename|write|lnk|prefetch|amcache/.test(a)) return 'file';
+    return 'other';
+  }
+  $: processRelatedCounts = processRelated.reduce(
+    (acc, e) => {
+      const c = relatedCategory(e);
+      acc[c] = (acc[c] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
+
+  // 選択プロセスの祖先チェーン(ルート→自分)をテキスト化(コピー/報告書用)。
+  function processAncestryText(node: ProcessNode): string {
+    const chain: ProcessNode[] = [];
+    let cursor: ProcessNode | undefined = node;
+    let guard = 0;
+    while (cursor && guard < 128) {
+      chain.unshift(cursor);
+      cursor = cursor.parent_key ? processForest.byKey.get(cursor.parent_key) : undefined;
+      guard += 1;
+    }
+    return chain
+      .map((n, i) => {
+        const head = `${'  '.repeat(i)}${i > 0 ? '└ ' : ''}${n.name}${n.pid ? ` [${n.pid}]` : ''}`;
+        return n.command_line ? `${head}  ${n.command_line}` : head;
+      })
+      .join('\n');
   }
 
   // Sysmon の Hashes は "MD5=..,SHA256=..,IMPHASH=.." 形式。SHA256 だけ取り出す。
@@ -2437,6 +2555,30 @@
     if (!h) return '—';
     const m = h.match(/SHA256=([0-9a-fA-F]{64})/i);
     return m ? m[1] : h;
+  }
+
+  // 右詳細ペインの幅(ドラッグで変更可能)。
+  let processDetailWidth = 620;
+  let ptreeDragStartX = 0;
+  let ptreeDragStartW = 0;
+  function onPtreeResize(e: MouseEvent) {
+    const delta = ptreeDragStartX - e.clientX;
+    processDetailWidth = Math.max(360, Math.min(1100, ptreeDragStartW + delta));
+  }
+  function stopPtreeResize() {
+    window.removeEventListener('mousemove', onPtreeResize);
+    window.removeEventListener('mouseup', stopPtreeResize);
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  }
+  function startPtreeResize(e: MouseEvent) {
+    ptreeDragStartX = e.clientX;
+    ptreeDragStartW = processDetailWidth;
+    window.addEventListener('mousemove', onPtreeResize);
+    window.addEventListener('mouseup', stopPtreeResize);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    e.preventDefault();
   }
 
   let processCopiedKey: string | null = null;
@@ -8602,6 +8744,12 @@
             <button class="ghost-button" on:click={collapseAllProcessNodes}
               >{$t('ptree.collapse_all')}</button
             >
+            <button
+              class="ghost-button"
+              class:active={processDangerOnly}
+              on:click={() => (processDangerOnly = !processDangerOnly)}
+              >{$t('ptree.danger_only')}</button
+            >
           </div>
         </div>
         <div class="ptree-summary subtle">
@@ -8611,113 +8759,258 @@
           )}{#if processNodes.length >= 2000} · {$t('ptree.truncated')}{/if}
         </div>
         {#if processNodes.length > 0 && processForest.roots.length === processNodes.length}
-          <div class="ptree-summary subtle">{$t('ptree.reingest_hint')}</div>
+          <div class="ptree-banner">{$t('ptree.reingest_hint')}</div>
         {/if}
         {#if processTreeStatus}
           <div class="empty-state">{processTreeStatus}</div>
         {:else if processTreeRows.length === 0}
           <div class="empty-state">{$t('empty.process_tree')}</div>
         {:else}
-          <div class="ptree-graph">
-            {#each processTreeRows as row (row.node.key)}
-              {@const isSel = selectedProcessNode?.key === row.node.key}
-              <div class="ptree-node-wrap" style={`--pdepth:${row.depth}`}>
-                <div
-                  class="ptree-node"
-                  class:has-finding={isNotableProcess(row.node)}
-                  class:selected={isSel}
-                  role="button"
-                  tabindex="0"
-                  on:click={() => selectProcessNode(row.node)}
-                  on:keydown={(e) => e.key === 'Enter' && selectProcessNode(row.node)}
-                >
-                  {#if row.hasChildren}
-                    <button
-                      class="ptree-caret"
-                      on:click|stopPropagation={() => toggleProcessNode(row.node.key)}
-                      aria-label={processTreeExpanded.has(row.node.key)
-                        ? $t('ptree.collapse')
-                        : $t('ptree.expand')}
-                      >{processTreeExpanded.has(row.node.key) ? '▾' : '▸'}</button
-                    >
-                  {:else}
-                    <span class="ptree-caret ptree-caret-empty"></span>
-                  {/if}
-                  {#if isNotableProcess(row.node)}
+          <div class="ptree-body-rel">
+            <div class="ptree-graph">
+              {#each processTreeRows as row (row.node.key)}
+                <div class="ptree-row-flex">
+                  {#each row.guides as g, i}
                     <span
-                      class="ptree-dot"
-                      style={`background:${severityColor(row.node.severity)}`}
-                      title={row.node.severity ?? ''}
+                      class="pg-cell {i === row.depth - 1
+                        ? g
+                          ? 'pg-tee'
+                          : 'pg-ell'
+                        : g
+                          ? 'pg-vert'
+                          : 'pg-blank'}"
                     ></span>
-                  {/if}
-                  {#if row.node.pid}<span class="ptree-pid">[{row.node.pid}]</span>{/if}
-                  <span class="ptree-name">{row.node.name}</span>
-                  {#if row.node.command_line}<span
-                      class="ptree-cmd"
-                      title={row.node.command_line}>{row.node.command_line}</span
-                    >{/if}
-                  <span class="ptree-chev">{isSel ? '⌄' : '›'}</span>
+                  {/each}
+                  <div
+                    class="ptree-node"
+                    class:has-finding={isNotableProcess(row.node)}
+                    class:selected={selectedProcessNode?.key === row.node.key}
+                    role="button"
+                    tabindex="0"
+                    on:click={() => activateProcessNode(row.node, row.hasChildren)}
+                    on:keydown={(e) =>
+                      e.key === 'Enter' && activateProcessNode(row.node, row.hasChildren)}
+                  >
+                    {#if row.hasChildren}
+                      <span class="ptree-toggle"
+                        >{processTreeExpanded.has(row.node.key) ? '−' : '+'}</span
+                      >
+                    {:else}
+                      <span class="ptree-toggle ptree-toggle-empty"></span>
+                    {/if}
+                    {#if isNotableProcess(row.node)}
+                      <span
+                        class="ptree-dot"
+                        style={`background:${severityColor(row.node.severity)}`}
+                        title={row.node.severity ?? ''}
+                      ></span>
+                    {/if}
+                    {#if row.node.pid}<span class="ptree-pid">[{row.node.pid}]</span>{/if}
+                    <span class="ptree-name">{row.node.name}</span>
+                    {#if row.hasChildren}
+                      {@const childCount =
+                        processForest.children.get(row.node.key)?.length ?? 0}
+                      <span class="ptree-count" title={$t('ptree.children')}>{childCount}</span>
+                    {/if}
+                    {#if row.node.command_line}<span
+                        class="ptree-cmd"
+                        title={row.node.command_line}>{row.node.command_line}</span
+                      >{/if}
+                  </div>
                 </div>
-                {#if isSel}
-                  <div class="ptree-card">
-                    <div class="ptree-card-grid">
-                      <span class="ptree-card-k">{$t('ptree.detail.pid')}</span>
-                      <span class="ptree-card-v">{row.node.pid ?? '—'}</span>
-                      <span class="ptree-card-k">{$t('ptree.detail.time')}</span>
-                      <span class="ptree-card-v">{row.node.first_seen_utc ?? '—'}</span>
-                      <span class="ptree-card-k">{$t('ptree.detail.cmdline')}</span>
-                      <span class="ptree-card-v">
-                        {#if row.node.command_line}
-                          <span class="ptree-cmdbox">
-                            <pre class="ptree-mono">{row.node.command_line}</pre>
-                            <button
-                              class="ptree-copy"
-                              title={$t('ptree.copy')}
-                              on:click|stopPropagation={() =>
-                                copyProcessValue(row.node.command_line ?? '', `cmd:${row.node.key}`)}
-                              >{processCopiedKey === `cmd:${row.node.key}`
-                                ? $t('ptree.copied')
-                                : '⧉'}</button
-                            >
-                          </span>
-                        {:else}—{/if}
-                      </span>
-                      <span class="ptree-card-k">{$t('ptree.detail.image')}</span>
-                      <span class="ptree-card-v ptree-mono">{row.node.image ?? '—'}</span>
-                      <span class="ptree-card-k">GUID</span>
-                      <span class="ptree-card-v ptree-mono">{row.node.guid ?? '—'}</span>
-                      <span class="ptree-card-k">SHA256</span>
-                      <span class="ptree-card-v ptree-mono ptree-hashval">
-                        {processSha256(row.node)}
-                        {#if row.node.hash}
+              {/each}
+            </div>
+            {#if selectedProcessNode}
+              {@const n = selectedProcessNode}
+              <aside class="ptree-drawer" style={`width:${processDetailWidth}px`}>
+                <button
+                  class="ptree-splitter"
+                  type="button"
+                  aria-label="resize detail pane"
+                  on:mousedown={startPtreeResize}
+                  on:keydown={(e) => {
+                    if (e.key === 'ArrowLeft')
+                      processDetailWidth = Math.min(1100, processDetailWidth + 20);
+                    else if (e.key === 'ArrowRight')
+                      processDetailWidth = Math.max(360, processDetailWidth - 20);
+                  }}
+                ></button>
+                <div class="ptree-drawer-body">
+                  <div class="ptree-drawer-head">
+                    {#if isNotableProcess(n)}
+                      <span
+                        class="ptree-dot"
+                        style={`background:${severityColor(n.severity)}`}
+                      ></span>
+                    {/if}
+                    <span class="ptree-detail-name">{n.name}</span>
+                    {#if n.has_finding && n.severity}
+                      <span class="ptree-sev" style={`color:${severityColor(n.severity)}`}
+                        >{n.severity}</span
+                      >
+                    {/if}
+                    <button
+                      class="ptree-close"
+                      aria-label="close"
+                      on:click={closeProcessDetail}>✕</button
+                    >
+                  </div>
+                  <div class="ptree-card-grid">
+                    <span class="ptree-card-k">{$t('ptree.detail.pid')}</span>
+                    <span class="ptree-card-v">{n.pid ?? '—'}</span>
+                    <span class="ptree-card-k">{$t('ptree.detail.time')}</span>
+                    <span class="ptree-card-v">{n.first_seen_utc ?? '—'}</span>
+                    <span class="ptree-card-k">{$t('ptree.detail.cmdline')}</span>
+                    <span class="ptree-card-v">
+                      {#if n.command_line}
+                        <span class="ptree-cmdbox">
+                          <pre class="ptree-mono">{n.command_line}</pre>
                           <button
                             class="ptree-copy"
                             title={$t('ptree.copy')}
-                            on:click|stopPropagation={() =>
-                              copyProcessValue(processSha256(row.node), `sha:${row.node.key}`)}
-                            >{processCopiedKey === `sha:${row.node.key}`
+                            on:click={() => copyProcessValue(n.command_line ?? '', `cmd:${n.key}`)}
+                            >{processCopiedKey === `cmd:${n.key}`
                               ? $t('ptree.copied')
                               : '⧉'}</button
                           >
-                        {/if}
-                      </span>
-                      <span class="ptree-card-k">{$t('ptree.detail.user')}</span>
-                      <span class="ptree-card-v">{row.node.user_name ?? '—'}</span>
-                      <span class="ptree-card-k">{$t('ptree.detail.detection')}</span>
+                        </span>
+                      {:else}—{/if}
+                    </span>
+                    <span class="ptree-card-k">{$t('ptree.detail.image')}</span>
+                    <span class="ptree-card-v ptree-mono ptree-imgpath">{n.image ?? '—'}</span>
+                    <span class="ptree-card-k">GUID</span>
+                    <span class="ptree-card-v ptree-mono">{n.guid ?? '—'}</span>
+                    <span class="ptree-card-k">SHA256</span>
+                    <span class="ptree-card-v ptree-mono ptree-hashval">
+                      {processSha256(n)}
+                      {#if n.hash}
+                        <button
+                          class="ptree-copy"
+                          title={$t('ptree.copy')}
+                          on:click={() => copyProcessValue(processSha256(n), `sha:${n.key}`)}
+                          >{processCopiedKey === `sha:${n.key}`
+                            ? $t('ptree.copied')
+                            : '⧉'}</button
+                        >
+                      {/if}
+                    </span>
+                    <span class="ptree-card-k">{$t('ptree.detail.user')}</span>
+                    <span class="ptree-card-v">{n.user_name ?? '—'}</span>
+                    <span class="ptree-card-k">{$t('ptree.detail.detection')}</span>
+                    <span class="ptree-card-v">
+                      {#if n.has_finding && n.severity}
+                        <span class="ptree-sev" style={`color:${severityColor(n.severity)}`}
+                          >{n.severity}</span
+                        >
+                      {:else}—{/if}
+                    </span>
+                    {#if n.attack.length}
+                      <span class="ptree-card-k">ATT&CK</span>
                       <span class="ptree-card-v">
-                        {#if row.node.has_finding && row.node.severity}
-                          <span
-                            class="ptree-sev"
-                            style={`color:${severityColor(row.node.severity)}`}
-                            >{row.node.severity}</span
-                          >
-                        {:else}—{/if}
+                        <span class="ptree-attack">
+                          {#each n.attack as a}<span class="ptree-atk-chip">{a}</span>{/each}
+                        </span>
                       </span>
-                    </div>
+                    {/if}
+                    {#if n.finding_titles.length}
+                      <span class="ptree-card-k">{$t('ptree.detail.rules')}</span>
+                      <span class="ptree-card-v">
+                        <ul class="ptree-rules">
+                          {#each n.finding_titles as title}<li>{title}</li>{/each}
+                        </ul>
+                      </span>
+                    {/if}
+                    {#if n.parent_key && processForest.byKey.get(n.parent_key)}
+                      {@const parent = processForest.byKey.get(n.parent_key)}
+                      <span class="ptree-card-k">{$t('ptree.detail.parent')}</span>
+                      <span class="ptree-card-v">
+                        <button
+                          class="ptree-link"
+                          on:click={() => parent && (selectedProcessNode = parent)}
+                          >{parent?.name}{parent?.pid ? ` [${parent.pid}]` : ''}</button
+                        >
+                      </span>
+                    {/if}
                   </div>
-                {/if}
-              </div>
-            {/each}
+                  {#if processOtherInstances(n).length}
+                    {@const others = processOtherInstances(n)}
+                    <div class="ptree-others">
+                      <div class="ptree-others-head">
+                        {$t('ptree.other_instances')} ({others.length})
+                      </div>
+                      <ul class="ptree-others-list">
+                        {#each others.slice(0, 20) as o (o.key)}
+                          <li>
+                            <button class="ptree-link" on:click={() => (selectedProcessNode = o)}
+                              >[{o.pid ?? '?'}]</button
+                            >
+                            <span class="subtle">{o.first_seen_utc ?? ''}</span>
+                          </li>
+                        {/each}
+                        {#if others.length > 20}
+                          <li class="subtle">… +{others.length - 20}</li>
+                        {/if}
+                      </ul>
+                    </div>
+                  {/if}
+                  {#if n.guid}
+                    <div class="ptree-related">
+                      <div class="ptree-others-head">
+                        {$t('ptree.related_activity')} ({processRelated.length})
+                      </div>
+                      {#if processRelatedLoading}
+                        <span class="subtle">{$t('ptree.related_loading')}</span>
+                      {:else if processRelated.length}
+                        <div class="ptree-related-counts">
+                          {#each ['network', 'file', 'registry', 'other'] as cat}
+                            {#if processRelatedCounts[cat]}
+                              <span class="ptree-rel-cat cat-{cat}"
+                                >{cat} {processRelatedCounts[cat]}</span
+                              >
+                            {/if}
+                          {/each}
+                        </div>
+                        <ul class="ptree-related-list">
+                          {#each processRelated.slice(0, 40) as e (e.event_id)}
+                            <li>
+                              <span class="ptree-rel-dot cat-{relatedCategory(e)}"></span>
+                              <span class="subtle ptree-rel-time">{e.event_time_utc ?? ''}</span>
+                              <span class="ptree-rel-action">{e.event_action}</span>
+                              {#if e.message}<span class="ptree-rel-msg" title={e.message}
+                                  >{e.message}</span
+                                >{/if}
+                            </li>
+                          {/each}
+                          {#if processRelated.length > 40}
+                            <li class="subtle">… +{processRelated.length - 40}</li>
+                          {/if}
+                        </ul>
+                      {:else}
+                        <span class="subtle">{$t('ptree.related_none')}</span>
+                      {/if}
+                    </div>
+                  {/if}
+                  <div class="ptree-drawer-actions">
+                    <button
+                      class="search-apply-button ptree-view-events"
+                      on:click={() => drillDownProcessNode(n)}>{$t('ptree.view_events')}</button
+                    >
+                    {#if n.first_seen_utc}
+                      <button class="ghost-button" on:click={() => drillProcessTimeline(n)}
+                        >{$t('ptree.timeline_context')}</button
+                      >
+                    {/if}
+                    <button
+                      class="ghost-button"
+                      on:click={() => copyProcessValue(processAncestryText(n), `chain:${n.key}`)}
+                      >{processCopiedKey === `chain:${n.key}`
+                        ? $t('ptree.copied')
+                        : $t('ptree.copy_chain')}</button
+                    >
+                  </div>
+                </div>
+              </aside>
+            {/if}
           </div>
         {/if}
       </div>

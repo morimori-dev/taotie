@@ -408,6 +408,16 @@ export interface ProcessNode {
   event_id: string;
   severity: string | null;
   has_finding: boolean;
+  finding_titles: string[];
+  attack: string[];
+}
+
+export interface ProcessRelatedEvent {
+  event_id: string;
+  event_time_utc: string | null;
+  artifact_type: string;
+  event_action: string;
+  message: string | null;
 }
 
 export interface FileOpBin {
