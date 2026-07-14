@@ -26,7 +26,8 @@ use taotie_schema::{
     derive_artifact_objects_from_event, derive_evidence_offsets_from_event, new_id, now_utc,
     parse_utc, AnalyzerRunSummary, AnswerCandidate, ArtifactObject, AuditLogEntry,
     BeaconIntervalBin, CaseApprovalRecord, CaseCustodyProfile, CaseDetectionEvaluation,
-    CaseQualityGate, CaseSummary, FileOpBin, ProcessNode, ProcessTreeEdge, TimestompPoint,
+    CaseQualityGate, CaseSummary, FileOpBin, ProcessNode, ProcessRelatedEvent, ProcessTreeEdge,
+    TimestompPoint,
     CorrelationChainEventPageQuery, CorrelationChainSummary, CorrelationSummary, CoverageSummary,
     CustodyManifestVerification, DefenderEventPageQuery, DefenderSummary,
     DetectionObjectiveEvaluation, EdgeRecord, EntityRecord, EventBookmark, EventContext,
@@ -4037,6 +4038,15 @@ pub fn get_process_tree(case_root: &str) -> Result<Vec<ProcessTreeEdge>> {
 pub fn get_process_tree_instances(case_root: &str) -> Result<Vec<ProcessNode>> {
     query(case_root)?
         .process_tree_instances(Some(2000))
+        .map_err(ApiError::from)
+}
+
+pub fn get_process_related_events(
+    case_root: &str,
+    guid: &str,
+) -> Result<Vec<ProcessRelatedEvent>> {
+    query(case_root)?
+        .process_related_events(guid, Some(300))
         .map_err(ApiError::from)
 }
 

@@ -580,6 +580,24 @@ pub struct ProcessNode {
     pub event_id: String,
     pub severity: Option<String>,
     pub has_finding: bool,
+    /// Titles of detections covering this process (why it's flagged).
+    #[serde(default)]
+    pub finding_titles: Vec<String>,
+    /// Distinct ATT&CK tactics/techniques from those detections.
+    #[serde(default)]
+    pub attack: Vec<String>,
+}
+
+/// One non-process-creation event attributed to a process instance (same Sysmon
+/// ProcessGuid): network connections, file/registry operations, etc. Powers the
+/// "related activity" section of the process-tree detail drawer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProcessRelatedEvent {
+    pub event_id: String,
+    pub event_time_utc: Option<String>,
+    pub artifact_type: String,
+    pub event_action: String,
+    pub message: Option<String>,
 }
 
 /// One time bucket of USN journal file operations, split by reason so the UI can

@@ -318,6 +318,14 @@ fn get_process_tree_instances(
 }
 
 #[tauri::command]
+fn get_process_related_events(
+    case_root: String,
+    guid: String,
+) -> CommandResult<Vec<taotie_schema::ProcessRelatedEvent>> {
+    taotie_api::get_process_related_events(&case_root, &guid).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn get_file_op_timeline(case_root: String) -> CommandResult<Vec<taotie_schema::FileOpBin>> {
     taotie_api::get_file_op_timeline(&case_root).map_err(|error| error.to_string())
 }
@@ -697,6 +705,7 @@ fn main() {
             get_timestomp_scatter,
             get_process_tree,
             get_process_tree_instances,
+            get_process_related_events,
             get_file_op_timeline,
             get_beacon_intervals,
             get_coverage_summary,

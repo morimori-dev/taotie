@@ -19,8 +19,8 @@ use taotie_schema::{
     EventFull, EventPageQuery, EventRow, EventTimelineBin, EvidenceOffset, FailedParserSummary,
     FileOpBin, FilePageQuery,
     FileRecord, FindingEventPageQuery, FindingSummary, IocEventPageQuery, IocHit, Page,
-    ParserStatus, PrefetchSummary, ProcessNode, ProcessTreeEdge, RawRecord, RiskSummary, Subgraph,
-    TimelineBin,
+    ParserStatus, PrefetchSummary, ProcessNode, ProcessRelatedEvent, ProcessTreeEdge, RawRecord,
+    RiskSummary, Subgraph, TimelineBin,
     TimestompPoint, UserActivitySummary,
 };
 use tracing::debug;
@@ -556,7 +556,7 @@ impl DuckDbQueryLayer {
         // process events — so it is a poor highlight signal.) Identity fields are
         // pulled from attributes_json with regexp_extract to match the rest of the
         // codebase (no reliance on the DuckDB json extension).
-        let finding_severity = self.finding_severity_by_event()?;
+        let finding_detail = self.finding_detail_by_event()?;
         let hash_col = if self.table_has_column("lake/events_full", "hash")? {
             "hash"
         } else {
@@ -614,7 +614,7 @@ impl DuckDbQueryLayer {
                 (None, Some(p)) => Some(format!("pid:{p}")),
                 _ => None,
             };
-            let severity = finding_severity.get(&event_id).cloned();
+            let agg = finding_detail.get(&event_id);
             nodes.push(ProcessNode {
                 key,
                 parent_key,
@@ -627,8 +627,10 @@ impl DuckDbQueryLayer {
                 user_name: clean(user),
                 first_seen_utc: clean(time),
                 event_id,
-                has_finding: severity.is_some(),
-                severity,
+                has_finding: agg.is_some(),
+                severity: agg.map(|a| a.severity.clone()),
+                finding_titles: agg.map(|a| a.titles.clone()).unwrap_or_default(),
+                attack: agg.map(|a| a.attack.clone()).unwrap_or_default(),
             });
             if nodes.len() >= node_cap {
                 break;
@@ -638,25 +640,82 @@ impl DuckDbQueryLayer {
         Ok(nodes)
     }
 
-    /// event_id -> highest finding severity covering it, from the findings read
-    /// model. Used to overlay real detection severity onto process-tree nodes.
-    fn finding_severity_by_event(&self) -> Result<HashMap<String, String>> {
+    /// Non-process-creation events sharing a Sysmon ProcessGuid — the network
+    /// connections, file/registry operations, etc. attributed to one process
+    /// instance. Ordered by time. Empty when the source has no ProcessGuid.
+    pub fn process_related_events(
+        &self,
+        guid: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<ProcessRelatedEvent>> {
+        let started = Instant::now();
+        let guid = guid.trim();
+        if guid.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(expr) = self.table_expr("lake/events_full")? else {
+            return Ok(Vec::new());
+        };
+        let cap = bounded_limit(limit, 200, 1000);
+        let conn = Connection::open_in_memory()?;
+        let sql = format!(
+            "SELECT event_id, event_time_utc, artifact_type, event_action, message_short \
+             FROM {expr} \
+             WHERE event_action <> 'process_created' \
+               AND NULLIF(regexp_extract(attributes_json, '\"process_guid\":\"([^\"]*)\"', 1), '') = {} \
+             ORDER BY event_time_utc \
+             LIMIT {cap}",
+            sql_literal(guid)
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ProcessRelatedEvent {
+                event_id: row.get::<_, String>(0)?,
+                event_time_utc: row.get::<_, Option<String>>(1)?,
+                artifact_type: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                event_action: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                message: row.get::<_, Option<String>>(4)?,
+            })
+        })?;
+        let events: Vec<ProcessRelatedEvent> = rows.collect::<std::result::Result<_, _>>()?;
+        log_payload("process_related_events", &events, started);
+        Ok(events)
+    }
+
+    /// event_id -> aggregated finding detail (max severity + detection titles +
+    /// ATT&CK entries) covering it, from the findings read model. Overlaid onto
+    /// process-tree nodes so the detail drawer can show why a process is flagged.
+    fn finding_detail_by_event(&self) -> Result<HashMap<String, FindingAgg>> {
         let Some(expr) = self.table_expr("lake/findings")? else {
             return Ok(HashMap::new());
         };
         let conn = Connection::open_in_memory()?;
-        let sql = format!("SELECT severity, event_ids_json FROM {expr}");
+        let sql = format!("SELECT severity, title, attack_json, event_ids_json FROM {expr}");
         let mut stmt = conn.prepare(&sql)?;
-        let rows =
-            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
-        let mut map: HashMap<String, String> = HashMap::new();
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut map: HashMap<String, FindingAgg> = HashMap::new();
         for row in rows {
-            let (severity, event_ids_json) = row?;
-            let rank = severity_rank(&severity);
+            let (severity, title, attack_json, event_ids_json) = row?;
+            let attack = parse_json_strings(&attack_json);
             for event_id in parse_json_strings(&event_ids_json) {
-                let better = map.get(&event_id).map_or(true, |cur| severity_rank(cur) < rank);
-                if better {
-                    map.insert(event_id, severity.clone());
+                let agg = map.entry(event_id).or_insert_with(FindingAgg::default);
+                if severity_rank(&severity) > severity_rank(&agg.severity) {
+                    agg.severity = severity.clone();
+                }
+                if !title.is_empty() && !agg.titles.contains(&title) && agg.titles.len() < 8 {
+                    agg.titles.push(title.clone());
+                }
+                for a in &attack {
+                    if !a.is_empty() && !agg.attack.contains(a) && agg.attack.len() < 10 {
+                        agg.attack.push(a.clone());
+                    }
                 }
             }
         }
@@ -3694,6 +3753,13 @@ fn structure_chain_noise_key(key_kind: &str, key_value: &str) -> bool {
             | "process_reference:mmres.dll"
             | "process_reference:svchost.exe"
     )
+}
+
+#[derive(Default)]
+struct FindingAgg {
+    severity: String,
+    titles: Vec<String>,
+    attack: Vec<String>,
 }
 
 fn severity_rank(value: &str) -> i64 {
