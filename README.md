@@ -266,11 +266,18 @@ environment is required.
 - Installer: download `taotie_<version>_x64-setup.exe`, run it, and launch
   Taotie from the Start menu. The installer bootstraps WebView2 automatically.
 
-> The Windows binaries are **not code-signed yet**, so SmartScreen shows a blue
-> *"Windows protected your PC — unknown publisher"* prompt the first time. This
-> is expected for a new unsigned app, not a malware detection: click
-> **More info → Run anyway**. Reputation builds over time, and signing is on the
-> roadmap.
+> **Windows security prompts (expected).** The Windows binaries are **not
+> code-signed**, so Windows will warn you on first run — this is normal for an
+> unsigned app, not a sign of malware:
+> - **SmartScreen** shows a blue *"Windows protected your PC — unknown
+>   publisher"* dialog. Click **More info → Run anyway**.
+> - **Windows Defender / antivirus** may flag or quarantine it as a **false
+>   positive**. Taotie is a DFIR tool whose detection engine contains the names
+>   and signatures of attacker tools (mimikatz, SharpHound, LOLBins, …) as plain
+>   strings, which heuristic AV sometimes reacts to. If it's quarantined, restore
+>   it and add an exclusion, or verify the file hash against the release page.
+>
+> Build from source (below) if you prefer to run a binary you compiled yourself.
 
 **Linux**
 
@@ -298,6 +305,11 @@ triggered by pushing a `v*` tag.
 - *Portable exe shows a WebView2 error on Windows 10* — install the
   [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
   once, or use the installer, which bootstraps it.
+- *"Unknown publisher" / certificate warning, or Defender flags the exe* — the
+  binaries are unsigned; SmartScreen and antivirus may warn. See the note under
+  **Download & run → Windows** above. This is expected for an unsigned DFIR tool,
+  not malware — click **More info → Run anyway**, and restore/exclude it in
+  Defender if quarantined.
 
 ## Build from source
 
